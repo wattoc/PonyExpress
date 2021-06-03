@@ -16,12 +16,17 @@ This software bundles in my Dropbox App key for PonyExpress - if you fork or oth
 * Basic Haiku integration, notifications, etc.
 
 ### Main Window
+
 A log of activity and a couple of menu options
+
 ![Screenshot](images/main_window.png)
+
 This will be going away in future and replaced with a preferences app and improvements to the notifications.
 
 ### Configuration Window
+
 Here you can set up your account on Dropbox
+
 ![Screenshot](images/configuration_window.png)
 
 - Click on the Request Code button
