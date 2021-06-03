@@ -288,8 +288,6 @@ void LocalFilesystem::AddToIgnoreList(const char * fullPath)
 	ignored_entries_locker->Lock();
 	ignored_entries.AddItem(ignoring);
 	ignored_entries_locker->Unlock();
-	LogInfo("Ignoring file: ");
-	LogInfoLine(fullPath);
 }
 
 void LocalFilesystem::RemoveFromIgnoreList(const char * fullPath)
@@ -298,15 +296,13 @@ void LocalFilesystem::RemoveFromIgnoreList(const char * fullPath)
 	{
 		BString *ignoring = (BString *)ignored_entries.ItemAt(i);
 		
-		if (strcmp(ignoring->String(), fullPath)) 
+		if (strcmp(ignoring->String(), fullPath) == 0) 
 		{
 			ignored_entries_locker->Lock();
 			ignored_entries.RemoveItem(i);
 			ignored_entries_locker->Unlock();
 
 			delete ignoring;
-			LogInfo("Stopped ignoring file: ");
-			LogInfoLine(fullPath);
 		}
 	}
 }
@@ -319,9 +315,6 @@ bool LocalFilesystem::IsInIgnoredList(const char *fullPath)
 		
 		if (strcmp(ignoring->String(), fullPath) == 0) 
 		{
-			LogInfo("Found ignored file: ");
-			LogInfoLine(fullPath);
-
 			return true;
 		}
 	}
@@ -360,10 +353,11 @@ void LocalFilesystem::HandleCreated(BMessage * msg)
 	{
 		new_file.GetModificationTime(&modified);
 		new_file.GetSize(&size);
-		if (!IsInIgnoredList(path.Path()))
+		if (!IsInIgnoredList(path.Path())) {
 			db->Upload(path.Path(), dbpath, DropboxSupport::ConvertSystemToTimestamp(modified), size); 
+			LogInfoLine(" Entry File Created");
+		}
 		WatchEntry(&new_file, WATCH_FLAGS);
-		LogInfoLine(" Entry File Created");
 	}
 	delete db;				
 }
@@ -411,9 +405,9 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 			ConvertFullPathToDropboxRelativePath(topath);
 			to_entry.GetModificationTime(&modified);
 			to_entry.GetSize(&size);
-			LogInfoLine("Move into DropBox");
 			if (!IsInIgnoredList(path.Path())) {
 				db->Upload(path.Path(), topath, DropboxSupport::ConvertSystemToTimestamp(modified), size); 
+				LogInfoLine("Move into DropBox");
 				WatchEntry(&to_entry, WATCH_FLAGS);
 			}
 		}
@@ -425,9 +419,9 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 			BString topath = BString(path.Path());
 			ConvertFullPathToDropboxRelativePath(frompath);
 			ConvertFullPathToDropboxRelativePath(topath);
-			LogInfoLine("Move within DropBox");
 			StopWatchingNodeRef(&tracked_file->nref);
 			if (!IsInIgnoredList(path.Path())) {
+				LogInfoLine("Move within DropBox");
 				db->Move(frompath, topath);
 				WatchEntry(&to_entry, WATCH_FLAGS);
 			}
@@ -441,9 +435,9 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 				from_entry = BEntry(tracked_file->path->Path());
 				BString frompath = BString(tracked_file->path->Path());
 				ConvertFullPathToDropboxRelativePath(frompath);
-				StopWatchingNodeRef(&tracked_file->nref);
 				if (!IsInIgnoredList(tracked_file->path->Path())) {
 					db->DeletePath(frompath);
+					StopWatchingNodeRef(&tracked_file->nref);
 					LogInfoLine("Remove from DropBox");
 				}
 			}
@@ -472,14 +466,13 @@ void LocalFilesystem::HandleRemoved(BMessage * msg)
 	else {	
 		if (!IsInIgnoredList(td->path->Path())) {
 			db->DeletePath(td->path->Path());
-			entry.SetTo(td->path->Path());
-			WatchEntry(&entry, B_STOP_WATCHING);
+			StopWatchingNodeRef(&td->nref);
+			LogInfoLine("Entry Removed");
 		}
 	}
 	
 	delete db;
 	
-	LogInfoLine("Entry Removed");
 
 }
 void LocalFilesystem::HandleChanged(BMessage * msg)
@@ -502,10 +495,11 @@ void LocalFilesystem::HandleChanged(BMessage * msg)
 
 	entry.GetModificationTime(&modified);
 	entry.GetSize(&size);
-	if (!IsInIgnoredList(td->path->Path()))
+	if (!IsInIgnoredList(td->path->Path())) {
 		db->Upload(td->path->Path(), dbpath, DropboxSupport::ConvertSystemToTimestamp(modified), size); 
+		LogInfoLine("Entry Changed");
+	}
 	delete db;
-	LogInfoLine("Entry Changed");
 }
 
 void LocalFilesystem::HandleNodeEvent(BMessage *msg)

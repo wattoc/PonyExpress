@@ -416,6 +416,8 @@ bool DropboxSupport::Upload(const char * file, const char * destfullpath, const 
 		headerdata.Append(commitdata);
 		url.Append("2/files/upload");
 		GetToken();
+		SendNotification("Upload", destfullpath, false);
+
 		return (HttpRequestUpload(url.String(),headerdata.String(), file, size));
 	} else 
 	{

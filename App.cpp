@@ -21,7 +21,7 @@ App::App(void)
 	LogInfo("App started\n");
 	LocalFilesystem::CheckOrCreateRootFolder("Dropbox/");
 	if (gSettings.authKey == NULL || gSettings.authVerifier == NULL) {
-		LogInfo("Please configure DropBox\n");
+		LogInfo("Please configure Dropbox\n");
 		SendNotification("Error", "Please configure Dropbox", true);
 
 	}
