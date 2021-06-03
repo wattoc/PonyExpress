@@ -33,12 +33,12 @@ void LocalFilesystem::RecursiveDelete(const char *path)
 	directory.SetTo(path);
 	while (directory.GetNextEntry(&fsentry) == B_OK)
 	{	
+		fsentry.GetNodeRef(&ref);
+		StopWatchingNodeRef(&ref);
 		if (fsentry.IsDirectory()) {
 			fsentry.GetPath(&userpath);
 			RecursiveDelete(userpath.Path());	
 		}
-		fsentry.GetNodeRef(&ref);
-		StopWatchingNodeRef(&ref);
 		fsentry.Remove();		
 	}
 }
@@ -86,8 +86,8 @@ bool LocalFilesystem::TestLocation(const char * rootPath, BMessage * dbMessage)
 				directory.CreateDirectory(userpath.Path(), NULL);
 				// flag that we can potentially pull down this entire directory
 				// in a zip file
+				//also want to watch it after downloads are complete, so need this on
 				needsUpdate = true;
-				WatchEntry(&fsentry, WATCH_FLAGS);
 			} else {
 				needsUpdate = false;
 			}
@@ -182,26 +182,25 @@ bool LocalFilesystem::IsInRemoteList(const char * path, time_t localModified, BL
 
 void LocalFilesystem::StopWatchingNodeRef(node_ref *nref)
 {
-	LocalFilesystem::RemoveTrackedEntry(nref);
 	watch_node(nref, B_STOP_WATCHING, be_app_messenger);
+	LocalFilesystem::RemoveTrackedEntry(nref);
 }
 
 void LocalFilesystem::WatchEntry(BEntry *entry, uint32 flags)
 {
 	node_ref nref;
 	entry->GetNodeRef(&nref);
-	
-	if ((flags & B_STOP_WATCHING) != 0) 
+	if (flags == B_STOP_WATCHING) 
 	{
-		LocalFilesystem::RemoveTrackedEntry(&nref);
+		RemoveTrackedEntry(&nref);
 	}
-	else 
-	{	
+	else
+	{
 		trackeddata * td = new trackeddata();
 		td->nref = nref;
 		entry->GetPath(td->path);
 		tracked_entries.AddItem(td);
-	}	
+	}
 	watch_node(&nref, flags, be_app_messenger);
 }
 
@@ -214,9 +213,11 @@ void LocalFilesystem::RecursivelyWatchDirectory(const char * fullPath, uint32 fl
 	//add node watcher to this dir
 	directory.GetEntry(&entry);
 	WatchEntry(&entry, flags);
-	LogInfo("Watching directory: ");
-	LogInfoLine(fullPath);
-	
+	if (flags != B_STOP_WATCHING) 
+	{
+		LogInfo("Watching directory: ");
+		LogInfoLine(fullPath);
+	}	
 	//add node watchers to any child dirs
 	while (directory.GetNextEntry(&entry) == B_OK)
 	{
@@ -233,7 +234,7 @@ void LocalFilesystem::RecursivelyWatchDirectory(const char * fullPath, uint32 fl
 
 void LocalFilesystem::ConvertFullPathToDropboxRelativePath(BString &full)
 {
-	BString dbpath = BString("Dropbox/");
+	BString dbpath = BString(DROPBOX_FOLDER);
 	ApplyFullPathToRelativeBasePath(dbpath);
 	full.RemoveFirst(dbpath);
 }
@@ -251,7 +252,7 @@ void LocalFilesystem::ApplyFullPathToRelativeBasePath(BString &relative)
 void LocalFilesystem::WatchDirectories()
 {
 		LogInfo("Starting watcher\n");
-		BString path = BString("Dropbox/");
+		BString path = BString(DROPBOX_FOLDER);
 		LocalFilesystem::ApplyFullPathToRelativeBasePath(path);
 		LocalFilesystem::RecursivelyWatchDirectory(path, WATCH_FLAGS);	
 }
@@ -267,6 +268,23 @@ LocalFilesystem::trackeddata * LocalFilesystem::FindTrackedEntry(node_ref find)
 	return NULL;
 }
 
+void LocalFilesystem::RemoveTrackedEntriesForPath(const char *fullPath)
+{
+	LogInfo("Removing all tracked entries for path: ");
+	LogInfoLine(fullPath);
+	for (int i=0; i<tracked_entries.CountItems(); i++)
+	{
+		trackeddata *file = (trackeddata *)tracked_entries.ItemAt(i);
+		BString path = BString(file->path->Path());
+		if (path.StartsWith(fullPath)) 
+		{
+			watch_node(&file->nref, B_STOP_WATCHING, be_app_messenger);
+			tracked_entries.RemoveItem(i);
+			delete file;
+		}
+	}
+	
+}
 void LocalFilesystem::RemoveTrackedEntry(node_ref * find) 
 {	
 	node_ref ref;
@@ -339,15 +357,14 @@ void LocalFilesystem::HandleCreated(BMessage * msg)
 	new_file.GetPath(&path);
 	BString dbpath = BString(path.Path());
 	ConvertFullPathToDropboxRelativePath(dbpath);
-	LogInfo(dbpath.String());
 	
 	if (new_file.IsDirectory())
 	{
-		if (!IsInIgnoredList(path.Path()))
+		if (!IsInIgnoredList(path.Path())) {
 	 		db->CreatePath(dbpath);
-		LocalFilesystem::RecursivelyWatchDirectory(path.Path(), WATCH_FLAGS);		
-		LogInfoLine(" Entry Folder Created");
-
+			LogInfoLine("Entry Folder Created");
+			WatchEntry(&new_file, WATCH_FLAGS);
+		}
 	}
 	else
 	{
@@ -355,7 +372,7 @@ void LocalFilesystem::HandleCreated(BMessage * msg)
 		new_file.GetSize(&size);
 		if (!IsInIgnoredList(path.Path())) {
 			db->Upload(path.Path(), dbpath, DropboxSupport::ConvertSystemToTimestamp(modified), size); 
-			LogInfoLine(" Entry File Created");
+			LogInfoLine("Entry File Created");
 		}
 		WatchEntry(&new_file, WATCH_FLAGS);
 	}
@@ -370,7 +387,7 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 	BPath path;
 	const char * name;
 	BDirectory dbdirectory;
-	BString dbpath = BString("Dropbox/");
+	BString dbpath = BString(DROPBOX_FOLDER);
 	trackeddata * tracked_file;
 
 	DropboxSupport * db = new DropboxSupport();
@@ -429,19 +446,24 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 		
 	} else {
 			// deleted from DropBox
-			if (tracked_file == NULL) {
-				LogInfoLine("Phantom move received?");
-			} else {
+			if (tracked_file != NULL) {
 				from_entry = BEntry(tracked_file->path->Path());
 				BString frompath = BString(tracked_file->path->Path());
 				ConvertFullPathToDropboxRelativePath(frompath);
 				if (!IsInIgnoredList(tracked_file->path->Path())) {
+					if (from_entry.IsDirectory()) 
+					{
+						RemoveTrackedEntriesForPath(tracked_file->path->Path());	
+					}
+					else 
+					{
+						StopWatchingNodeRef(&tracked_file->nref);		
+					}
 					db->DeletePath(frompath);
-					StopWatchingNodeRef(&tracked_file->nref);
-					LogInfoLine("Remove from DropBox");
+					LogInfo(frompath);
+					LogInfoLine(" Remove from DropBox");
 				}
 			}
-
 	}
 	
 	delete db;				
@@ -449,31 +471,35 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 
 void LocalFilesystem::HandleRemoved(BMessage * msg)
 {
-	BPath path;
 	node_ref nref;
 	trackeddata * td;
 	BEntry entry;
+	BString path;
 	
 	DropboxSupport * db = new DropboxSupport();
 	
 	msg->FindInt64("node", &nref.node);
 	msg->FindInt32("device", &nref.device);
 	td = FindTrackedEntry(nref);
-	if (td == NULL) {
-		msg->PrintToStream();
-		LogInfoLine("Phantom delete?");
-	}
-	else {	
-		if (!IsInIgnoredList(td->path->Path())) {
-			db->DeletePath(td->path->Path());
-			StopWatchingNodeRef(&td->nref);
-			LogInfoLine("Entry Removed");
+	if (td != NULL && !IsInIgnoredList(td->path->Path())) 
+	{
+		entry = BEntry(td->path->Path());
+		path = BString(td->path->Path());
+		if (entry.IsDirectory()) 
+		{
+			RemoveTrackedEntriesForPath(td->path->Path());	
 		}
+		else 
+		{
+			StopWatchingNodeRef(&td->nref);		
+		}
+		ConvertFullPathToDropboxRelativePath(path);			
+		db->DeletePath(path);
+		LogInfo(path);
+		LogInfoLine(" Entry Removed");
 	}
-	
-	delete db;
-	
 
+	delete db;
 }
 void LocalFilesystem::HandleChanged(BMessage * msg)
 {
@@ -489,15 +515,18 @@ void LocalFilesystem::HandleChanged(BMessage * msg)
 	msg->FindInt64("node", &nref.node);
 	msg->FindInt32("device", &nref.device);
 	td = FindTrackedEntry(nref);
-	entry.SetTo(td->path->Path());
-	BString dbpath = BString(td->path->Path());
-	ConvertFullPathToDropboxRelativePath(dbpath);
+	if (td != NULL)
+	{
+		entry.SetTo(td->path->Path());
+		BString dbpath = BString(td->path->Path());
+		ConvertFullPathToDropboxRelativePath(dbpath);
 
-	entry.GetModificationTime(&modified);
-	entry.GetSize(&size);
-	if (!IsInIgnoredList(td->path->Path())) {
-		db->Upload(td->path->Path(), dbpath, DropboxSupport::ConvertSystemToTimestamp(modified), size); 
-		LogInfoLine("Entry Changed");
+		entry.GetModificationTime(&modified);
+		entry.GetSize(&size);
+		if (!IsInIgnoredList(td->path->Path())) {
+			db->Upload(td->path->Path(), dbpath, DropboxSupport::ConvertSystemToTimestamp(modified), size); 
+			LogInfoLine("Entry Changed");
+		}
 	}
 	delete db;
 }
@@ -507,6 +536,8 @@ void LocalFilesystem::HandleNodeEvent(BMessage *msg)
 	int32 opcode;
 	if (msg->FindInt32("opcode",&opcode) == B_OK)
 	{
+		//many of these ops are triggered twice due to watching the folders
+		//and the files themselves
 		switch(opcode)
 		{
 			case B_ENTRY_CREATED:
@@ -514,13 +545,10 @@ void LocalFilesystem::HandleNodeEvent(BMessage *msg)
 				break;
 			case B_ENTRY_MOVED:
 				HandleMoved(msg);
-				break;
-				
+				break;			
 			case B_ENTRY_REMOVED:
-			{
 				HandleRemoved(msg);
 				break;
-			}	
 			case B_STAT_CHANGED:
 			{
 				int32 fields;

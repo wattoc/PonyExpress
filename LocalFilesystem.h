@@ -9,7 +9,7 @@
 #include <NodeMonitor.h>
 #include <Path.h>
 
-#define WATCH_FLAGS (B_WATCH_DIRECTORY | B_WATCH_STAT | B_WATCH_INTERIM_STAT | B_WATCH_NAME)
+#define WATCH_FLAGS (B_WATCH_DIRECTORY | B_WATCH_STAT | B_WATCH_NAME)
 
 class LocalFilesystem
 {
@@ -53,6 +53,7 @@ class LocalFilesystem
 		static bool IsInIgnoredList(const char *fullPath);
 		static trackeddata * FindTrackedEntry(node_ref find);
 		static void RemoveTrackedEntry(node_ref * find);
+		static void RemoveTrackedEntriesForPath(const char *fullPath);
 		static void RecursiveDelete(const char *path);
 
 };

@@ -571,17 +571,32 @@ bool DropboxSupport::PullMissing(const char * rootpath, BList & items)
 			BString entryType = item->GetString(".tag");
 			BString fullPath = BString(userpath.Path());
 			fullPath.Append(entryPath);
+			LocalFilesystem::AddToIgnoreList(fullPath.String());			
 			if (entryType=="file") {
 				time_t sModified = ConvertTimestampToSystem(item->GetString("client_modified"));
-				LocalFilesystem::AddToIgnoreList(fullPath.String());
 				result = result & Download(entryPath.String(), fullPath.String());
 				//set modified date
 				fsentry = BEntry(fullPath.String());
 				fsentry.SetModificationTime(sModified);
-				LocalFilesystem::WatchEntry(&fsentry, WATCH_FLAGS);
-				LocalFilesystem::RemoveFromIgnoreList(fullPath.String());		
 			}
 			// we don't support DIRs by Zip yet
+		}
+		sleep(1);
+		for(int i=0; i < items.CountItems(); i++)
+		{		
+			BMessage * item = (BMessage*)items.ItemAtFast(i);
+			BEntry fsentry;
+			BString entryPath = item->GetString("path_display");
+			BString entryType = item->GetString(".tag");
+			BString fullPath = BString(userpath.Path());
+			fullPath.Append(entryPath);
+			fsentry = BEntry(fullPath.String());
+			if (fsentry.IsDirectory()) {
+				LogInfo("Watching directory: ");
+				LogInfoLine(fullPath);
+			}
+			LocalFilesystem::WatchEntry(&fsentry, WATCH_FLAGS);
+			LocalFilesystem::RemoveFromIgnoreList(fullPath.String());		
 		}
 		
 		if (items.CountItems() > 0)
@@ -844,17 +859,17 @@ void DropboxSupport::PerformFullUpdate(bool forceFull)
 
 		for(int i=0; i < items.CountItems(); i++)
 		{
-			if (LocalFilesystem::TestLocation("Dropbox/", (BMessage*)items.ItemAtFast(i)))
+			if (LocalFilesystem::TestLocation(DROPBOX_FOLDER, (BMessage*)items.ItemAtFast(i)))
 				updateItems.AddItem(items.ItemAtFast(i));
 		}
 		char itemstoupdate[40];
 		sprintf(itemstoupdate, "%d remote items to update\n", updateItems.CountItems());
     	LogInfo(itemstoupdate);
-		LocalFilesystem::ResolveUnreferencedLocals("Dropbox/", "", items, localItems, forceFull);
+		LocalFilesystem::ResolveUnreferencedLocals(DROPBOX_FOLDER, "", items, localItems, forceFull);
 		sprintf(itemstoupdate, "%d local items to update\n", localItems.CountItems());
     	LogInfo(itemstoupdate);
-		PullMissing("Dropbox/", updateItems);
-		SendMissing("Dropbox/", localItems);
+		PullMissing(DROPBOX_FOLDER, updateItems);
+		SendMissing(DROPBOX_FOLDER, localItems);
 
 		for(int i=0; i < localItems.CountItems(); i++)
 		{
@@ -881,13 +896,13 @@ void DropboxSupport::PerformPolledUpdate()
 
 		for(int i=0; i < items.CountItems(); i++)
 		{
-			if (LocalFilesystem::TestLocation("Dropbox/", (BMessage*)items.ItemAtFast(i)))
+			if (LocalFilesystem::TestLocation(DROPBOX_FOLDER, (BMessage*)items.ItemAtFast(i)))
 				updateItems.AddItem(items.ItemAtFast(i));
 		}
 		char itemstoupdate[40];
 		sprintf(itemstoupdate, "%d remote items to update\n", updateItems.CountItems());
     	LogInfo(itemstoupdate);
-		PullMissing("Dropbox/", updateItems);
+		PullMissing(DROPBOX_FOLDER, updateItems);
 
 		for(int i=0; i < items.CountItems(); i++)
 		{

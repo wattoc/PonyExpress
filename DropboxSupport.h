@@ -15,6 +15,7 @@
 #define DROPBOX_AUTH_URL "https://www.dropbox.com/oauth2/authorize"
 
 #define DROPBOX_UPLOAD_CHUNK 4194304
+#define DROPBOX_FOLDER "Dropbox/"
 
 class DropboxSupport
 {

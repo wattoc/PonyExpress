@@ -19,7 +19,7 @@ App::App(void)
 	mainwin->Show();
 	SetLogRecipient(mainwin);
 	LogInfo("App started\n");
-	LocalFilesystem::CheckOrCreateRootFolder("Dropbox/");
+	LocalFilesystem::CheckOrCreateRootFolder(DROPBOX_FOLDER);
 	if (gSettings.authKey == NULL || gSettings.authVerifier == NULL) {
 		LogInfo("Please configure Dropbox\n");
 		SendNotification("Error", "Please configure Dropbox", true);
@@ -69,6 +69,12 @@ void App::MessageReceived(BMessage *msg)
 		case B_NODE_MONITOR:
 		{
 			LocalFilesystem::HandleNodeEvent(msg);
+			break;	
+		}
+		case B_QUIT_REQUESTED:
+		{
+			isRunning = false;
+			exit_thread(DBCheckerThread);
 			break;	
 		}
 		default:
