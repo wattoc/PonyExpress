@@ -6,8 +6,6 @@
 #include <SupportDefs.h>
 #include <String.h>
 
-#include <curl/curl.h>
-
 #define DROPBOX_API_URL "https://api.dropbox.com/"
 #define DROPBOX_NOTIFY_URL "https://notify.dropboxapi.com/"
 #define DROPBOX_CONTENT_URL "https://content.dropboxapi.com/"
@@ -22,7 +20,7 @@ class DropboxSupport
 public:
 	
 	DropboxSupport(void) {};
-	~DropboxSupport();
+	~DropboxSupport() {};
 	//auth/token stuff
 	static BString * GetClientAuth(const char * appkey, const char * verifier, int length);
 	static BString * GetCodeVerifier(void);
@@ -52,15 +50,9 @@ public:
 	
 private:
 	static bool FillWithRandomData(const char* randomBytes, int length);
-	bool HttpRequest(const char * url, const char * postdata, int postlength, BString *&response, bool addAuthHeader, bool addExpectJson);
-	bool HttpRequestDownload(const char * url, const char * headerdata, const char * fullPath);
-	bool HttpRequestUpload(const char * url, const char * headerdata, const char * fullPath, off_t size);
-	bool HttpRequestUploadBulk(const char * url, const char * headerdata, const char * fullPath, off_t maxchunksize, off_t offset, BString & response);
-	
-	
-	CURL *curl_handle = NULL;
 	static BString accessToken;
 	static time_t tokenExpiry;
+
 };
 
 #endif // _H

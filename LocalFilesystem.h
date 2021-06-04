@@ -9,6 +9,8 @@
 #include <NodeMonitor.h>
 #include <Path.h>
 
+#include "DropboxSupport.h"
+
 #define WATCH_FLAGS (B_WATCH_DIRECTORY | B_WATCH_STAT | B_WATCH_NAME)
 
 class LocalFilesystem
@@ -55,7 +57,7 @@ class LocalFilesystem
 		static void RemoveTrackedEntry(node_ref * find);
 		static void RemoveTrackedEntriesForPath(const char *fullPath);
 		static void RecursiveDelete(const char *path);
-
+		static void RecursiveAddToCloud(DropboxSupport *db, const char *fullPath);
 };
 
 

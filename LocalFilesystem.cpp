@@ -232,6 +232,37 @@ void LocalFilesystem::RecursivelyWatchDirectory(const char * fullPath, uint32 fl
 	}
 }
 
+void LocalFilesystem::RecursiveAddToCloud(DropboxSupport * db, const char *fullPath) 
+{
+	BDirectory directory;
+	BEntry entry;
+	BString dbpath;
+	directory.SetTo(fullPath);
+	directory.GetEntry(&entry);
+	while (directory.GetNextEntry(&entry) == B_OK)
+	{
+		BPath userpath;
+		entry.GetPath(&userpath);
+		dbpath = BString(userpath.Path());
+		ConvertFullPathToDropboxRelativePath(dbpath);
+		if (entry.IsDirectory())
+		{
+			db->CreatePath(dbpath);
+			RecursiveAddToCloud(db, userpath.Path());
+		}
+		else	
+		{
+			off_t size;
+			time_t modified;
+			entry.GetModificationTime(&modified);
+			entry.GetSize(&size);
+			db->Upload(userpath.Path(), dbpath, DropboxSupport::ConvertSystemToTimestamp(modified), size);
+		}
+		WatchEntry(&entry, WATCH_FLAGS);	
+	}
+	
+}
+
 void LocalFilesystem::ConvertFullPathToDropboxRelativePath(BString &full)
 {
 	BString dbpath = BString(DROPBOX_FOLDER);
@@ -344,8 +375,6 @@ void LocalFilesystem::HandleCreated(BMessage * msg)
 {
 	entry_ref ref;
 	BPath path;
-	off_t size;
-	time_t modified;
 	const char * name;
 	DropboxSupport * db = new DropboxSupport();
 	
@@ -363,11 +392,15 @@ void LocalFilesystem::HandleCreated(BMessage * msg)
 		if (!IsInIgnoredList(path.Path())) {
 	 		db->CreatePath(dbpath);
 			LogInfoLine("Entry Folder Created");
+			//need to recursively upload folder contents
+			RecursiveAddToCloud(db, path.Path());
 			WatchEntry(&new_file, WATCH_FLAGS);
 		}
 	}
 	else
 	{
+		off_t size;
+		time_t modified;
 		new_file.GetModificationTime(&modified);
 		new_file.GetSize(&size);
 		if (!IsInIgnoredList(path.Path())) {
@@ -423,8 +456,14 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 			to_entry.GetModificationTime(&modified);
 			to_entry.GetSize(&size);
 			if (!IsInIgnoredList(path.Path())) {
-				db->Upload(path.Path(), topath, DropboxSupport::ConvertSystemToTimestamp(modified), size); 
 				LogInfoLine("Move into DropBox");
+				if (to_entry.IsDirectory())
+				{
+					//upload contents of directory also as it's not being tracked yet
+					RecursiveAddToCloud(db, path.Path());
+				} else {
+					db->Upload(path.Path(), topath, DropboxSupport::ConvertSystemToTimestamp(modified), size); 					
+				}
 				WatchEntry(&to_entry, WATCH_FLAGS);
 			}
 		}

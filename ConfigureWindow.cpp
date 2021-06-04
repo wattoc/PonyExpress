@@ -5,6 +5,7 @@
 #include <Message.h>
 #include <Roster.h>
 #include <View.h>
+#include <stdio.h>
 
 #include "config.h"
 #include "DropboxSupport.h"
