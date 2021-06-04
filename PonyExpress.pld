@@ -6,6 +6,7 @@ GROUP=Source files
 EXPANDGROUP=yes
 SOURCEFILE=App.cpp
 DEPENDENCY=App.h|DropboxSupport.h|config.h Globals.h|Settings.h|MainWindow.h|ConfigureWindow.h|LocalFilesystem.h
+SOURCEFILE=CloudSupport.h
 SOURCEFILE=ConfigureWindow.cpp
 DEPENDENCY=ConfigureWindow.h|config.h|DropboxSupport.h|Globals.h App.h|Settings.h
 SOURCEFILE=ConfigureWindow.h

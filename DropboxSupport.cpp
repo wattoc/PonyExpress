@@ -461,15 +461,11 @@ bool DropboxSupport::SendMissing(const char * rootpath, BList & items)
 			fsentry.GetSize(&sSize);
 			fullPath.Append(entryPath);
 			
-			const char * modified = ConvertSystemToTimestamp(sModified);
-			
 			if (entryType=="file") {
-				result &= Upload(fullPath.String(), entryPath.String(), modified, sSize);
+				result &= Upload(fullPath.String(), entryPath.String(), sModified, sSize);
 			} else if (entryType=="folder") {
 				result &= CreatePath(entryPath.String());
 			}
-
-			delete modified;
 			// we don't support DIRs by Zip yet
 		}
 		if (items.CountItems() > 0) 
@@ -483,11 +479,12 @@ bool DropboxSupport::SendMissing(const char * rootpath, BList & items)
 	return result;	
 }
 
-bool DropboxSupport::Upload(const char * file, const char * destfullpath, const char * clientmodified, off_t size)
+bool DropboxSupport::Upload(const char * file, const char * destfullpath, time_t modified, off_t size)
 {
 	BString url = BString(DROPBOX_CONTENT_URL);
 	BString headerdata = BString("Dropbox-API-Arg: ");
 	BString commitdata = BString("\{\"path\": \"");
+	BString clientmodified = BString(ConvertSystemToTimestamp(modified));
 	HttpRequest * req = new HttpRequest();
 	commitdata.Append(destfullpath);
 	commitdata.Append("\", \"mode\": \"overwrite\", \"autorename\": true, \"mute\": false, \"strict_conflict\": false, \"client_modified\": \"");
@@ -595,6 +592,12 @@ bool DropboxSupport::CreatePath(const char * destfullpath)
 	result = req->Post(url.String(), postData.String(), postData.Length(), response, &accessToken, true);
 	delete req;
 	return result;
+}
+
+bool DropboxSupport::DownloadPath(const char * path)
+{
+	//add zipped download support
+	return false;
 }
 
 bool DropboxSupport::DeletePath(const char * path)

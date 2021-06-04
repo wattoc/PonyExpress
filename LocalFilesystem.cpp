@@ -6,6 +6,7 @@
 #include <NodeMonitor.h>
 #include <String.h>
 
+#include "CloudSupport.h"
 #include "DropboxSupport.h"
 #include "Globals.h"
 
@@ -232,7 +233,7 @@ void LocalFilesystem::RecursivelyWatchDirectory(const char * fullPath, uint32 fl
 	}
 }
 
-void LocalFilesystem::RecursiveAddToCloud(DropboxSupport * db, const char *fullPath) 
+void LocalFilesystem::RecursiveAddToCloud(CloudSupport * db, const char *fullPath) 
 {
 	BDirectory directory;
 	BEntry entry;
@@ -256,7 +257,7 @@ void LocalFilesystem::RecursiveAddToCloud(DropboxSupport * db, const char *fullP
 			time_t modified;
 			entry.GetModificationTime(&modified);
 			entry.GetSize(&size);
-			db->Upload(userpath.Path(), dbpath, DropboxSupport::ConvertSystemToTimestamp(modified), size);
+			db->Upload(userpath.Path(), dbpath, modified, size);
 		}
 		WatchEntry(&entry, WATCH_FLAGS);	
 	}
@@ -376,7 +377,7 @@ void LocalFilesystem::HandleCreated(BMessage * msg)
 	entry_ref ref;
 	BPath path;
 	const char * name;
-	DropboxSupport * db = new DropboxSupport();
+	CloudSupport * db = new DropboxSupport();
 	
 	msg->FindInt32("device", &ref.device);
 	msg->FindInt64("directory", &ref.directory);
@@ -404,7 +405,7 @@ void LocalFilesystem::HandleCreated(BMessage * msg)
 		new_file.GetModificationTime(&modified);
 		new_file.GetSize(&size);
 		if (!IsInIgnoredList(path.Path())) {
-			db->Upload(path.Path(), dbpath, DropboxSupport::ConvertSystemToTimestamp(modified), size); 
+			db->Upload(path.Path(), dbpath, modified, size); 
 			LogInfoLine("Entry File Created");
 		}
 		WatchEntry(&new_file, WATCH_FLAGS);
@@ -423,7 +424,7 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 	BString dbpath = BString(DROPBOX_FOLDER);
 	trackeddata * tracked_file;
 
-	DropboxSupport * db = new DropboxSupport();
+	CloudSupport * db = new DropboxSupport();
 	
 	ApplyFullPathToRelativeBasePath(dbpath);
 	dbdirectory = BDirectory(dbpath);
@@ -462,7 +463,7 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 					//upload contents of directory also as it's not being tracked yet
 					RecursiveAddToCloud(db, path.Path());
 				} else {
-					db->Upload(path.Path(), topath, DropboxSupport::ConvertSystemToTimestamp(modified), size); 					
+					db->Upload(path.Path(), topath, modified, size); 					
 				}
 				WatchEntry(&to_entry, WATCH_FLAGS);
 			}
@@ -515,7 +516,7 @@ void LocalFilesystem::HandleRemoved(BMessage * msg)
 	BEntry entry;
 	BString path;
 	
-	DropboxSupport * db = new DropboxSupport();
+	CloudSupport * db = new DropboxSupport();
 	
 	msg->FindInt64("node", &nref.node);
 	msg->FindInt32("device", &nref.device);
@@ -549,7 +550,7 @@ void LocalFilesystem::HandleChanged(BMessage * msg)
 	time_t modified;
 	off_t size;
 	
-	DropboxSupport * db = new DropboxSupport();
+	CloudSupport * db = new DropboxSupport();
 	
 	msg->FindInt64("node", &nref.node);
 	msg->FindInt32("device", &nref.device);
@@ -563,7 +564,7 @@ void LocalFilesystem::HandleChanged(BMessage * msg)
 		entry.GetModificationTime(&modified);
 		entry.GetSize(&size);
 		if (!IsInIgnoredList(td->path->Path())) {
-			db->Upload(td->path->Path(), dbpath, DropboxSupport::ConvertSystemToTimestamp(modified), size); 
+			db->Upload(td->path->Path(), dbpath, modified, size); 
 			LogInfoLine("Entry Changed");
 		}
 	}

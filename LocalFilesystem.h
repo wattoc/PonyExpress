@@ -57,7 +57,7 @@ class LocalFilesystem
 		static void RemoveTrackedEntry(node_ref * find);
 		static void RemoveTrackedEntriesForPath(const char *fullPath);
 		static void RecursiveDelete(const char *path);
-		static void RecursiveAddToCloud(DropboxSupport *db, const char *fullPath);
+		static void RecursiveAddToCloud(CloudSupport *db, const char *fullPath);
 };
 
 

@@ -5,6 +5,7 @@
 #include <Notification.h>
 
 #include "config.h"
+#include "CloudSupport.h"
 #include "Globals.h"
 #include "MainWindow.h"
 #include "LocalFilesystem.h"
@@ -27,8 +28,8 @@ App::App(void)
 	}
 	else {
 		LogInfo("DropBox configured, performing sync check\n");
-		DropboxSupport db = DropboxSupport();	
-		db.PerformFullUpdate(false);
+		CloudSupport * db = new DropboxSupport();	
+		db->PerformFullUpdate(false);
 
 		LogInfo("Polling for updates\n");
 		// run updater in thread
@@ -42,6 +43,7 @@ App::App(void)
 		LocalFilesystem::WatchDirectories();
 		
 		SendNotification(" Ready", "Watching for updates", false);
+		delete db;
 	}
 	
 }
@@ -53,7 +55,7 @@ int App::DBCheckerThread_static(void *app)
 
 int App::DBCheckerThread_func()
 {
-	DropboxSupport * db = new DropboxSupport();
+	CloudSupport * db = new DropboxSupport();
 	while (isRunning)
 	{
 		db->PerformPolledUpdate();

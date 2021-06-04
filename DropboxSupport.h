@@ -6,6 +6,8 @@
 #include <SupportDefs.h>
 #include <String.h>
 
+#include <CloudSupport.h>
+
 #define DROPBOX_API_URL "https://api.dropbox.com/"
 #define DROPBOX_NOTIFY_URL "https://notify.dropboxapi.com/"
 #define DROPBOX_CONTENT_URL "https://content.dropboxapi.com/"
@@ -15,7 +17,7 @@
 #define DROPBOX_UPLOAD_CHUNK 4194304
 #define DROPBOX_FOLDER "Dropbox/"
 
-class DropboxSupport
+class DropboxSupport : public CloudSupport
 {
 public:
 	
@@ -38,7 +40,7 @@ public:
 	bool SendMissing(const char * rootpath, BList & items);
 		
 	//file get/put/delete
-	bool Upload(const char * file, const char * destfullpath, const char * clientmodified, off_t size);
+	bool Upload(const char * file, const char * destfullpath, time_t modified, off_t size);
 	bool Download(const char * file, const char * destfullpath);
 	bool CreatePath(const char * destfullpath);
 	bool DownloadPath(const char * path);
