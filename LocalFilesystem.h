@@ -9,17 +9,18 @@
 #include <NodeMonitor.h>
 #include <Path.h>
 
-#include "DropboxSupport.h"
+#include "Manager.h"
 
 #define WATCH_FLAGS (B_WATCH_DIRECTORY | B_WATCH_STAT | B_WATCH_NAME)
 
 class LocalFilesystem
 {
 	public:
-		LocalFilesystem(void) {};
+		LocalFilesystem(Manager::SupportedClouds usingCloud) { cloud = usingCloud; };
 
 		static bool TestLocation(const char * rootPath, BMessage * dbMessage);
 		static bool ResolveUnreferencedLocals(const char * rootPath, const char * leaf, BList & remote, BList & local, bool forceFull);
+		static bool SendMissing(Manager::SupportedClouds cloud, const char * rootpath, BList & items);
 		static void ApplyFullPathToRelativeBasePath(BString &relative);
 		static void ConvertFullPathToDropboxRelativePath(BString &full);
 		static void RecursivelyWatchDirectory(const char * fullPath, uint32 flags);
@@ -27,17 +28,19 @@ class LocalFilesystem
 		static void WatchDirectories(void);
 		static void CheckOrCreateRootFolder(const char * rootPath);
 
-		static void HandleNodeEvent(BMessage *message);
-		static void HandleCreated(BMessage * message);
-		static void HandleMoved(BMessage * message);
-		static void HandleRemoved(BMessage * message);
-		static void HandleChanged(BMessage * message);
+		void HandleNodeEvent(BMessage *message);
+		void HandleCreated(BMessage * message);
+		void HandleMoved(BMessage * message);
+		void HandleRemoved(BMessage * message);
+		void HandleChanged(BMessage * message);
 
 		static void AddToIgnoreList(const char * fullPath);
 		static void RemoveFromIgnoreList(const char * fullPath);
 		static void WatchEntry(BEntry *entry, uint32 flags);
 		
 	private:
+		Manager::SupportedClouds cloud;
+
 		class trackeddata {
 			public:
 				trackeddata(void) { path = new BPath(); };
@@ -57,7 +60,7 @@ class LocalFilesystem
 		static void RemoveTrackedEntry(node_ref * find);
 		static void RemoveTrackedEntriesForPath(const char *fullPath);
 		static void RecursiveDelete(const char *path);
-		static void RecursiveAddToCloud(CloudSupport *db, const char *fullPath);
+		void RecursiveAddToCloud(const char *fullPath);
 };
 
 

@@ -7,6 +7,7 @@
 #include "config.h"
 #include "CloudSupport.h"
 #include "Globals.h"
+#include "HttpRequest.h"
 #include "MainWindow.h"
 #include "LocalFilesystem.h"
 
@@ -16,10 +17,41 @@ App::App(void)
 	:	BApplication(APP_SIGNATURE)
 {
 	InitGlobals(this);
+	HttpRequest::GlobalInit();
 	MainWindow * mainwin = new MainWindow();
 	mainwin->Show();
 	SetLogRecipient(mainwin);
 	LogInfo("App started\n");
+	cloudManager = new Manager(Manager::DROPBOX, gSettings.maxThreads);
+	fileSystem = new LocalFilesystem(Manager::DROPBOX);
+	StartDropbox();
+}
+
+App::~App()
+{
+	delete cloudManager;
+	delete fileSystem;
+	HttpRequest::GlobalCleanup();
+}
+
+int App::DBCheckerThread_static(void *app)
+{
+	return ((App *)app)->DBCheckerThread_func();
+}
+
+int App::DBCheckerThread_func()
+{
+	CloudSupport * db = new DropboxSupport();
+	while (isRunning)
+	{
+		db->PerformPolledUpdate();
+	}
+	delete db;
+	return B_OK;
+}
+
+void App::StartDropbox()
+{
 	LocalFilesystem::CheckOrCreateRootFolder(DROPBOX_FOLDER);
 	if (gSettings.authKey == NULL || gSettings.authVerifier == NULL) {
 		LogInfo("Please configure Dropbox\n");
@@ -45,23 +77,6 @@ App::App(void)
 		SendNotification(" Ready", "Watching for updates", false);
 		delete db;
 	}
-	
-}
-
-int App::DBCheckerThread_static(void *app)
-{
-	return ((App *)app)->DBCheckerThread_func();
-}
-
-int App::DBCheckerThread_func()
-{
-	CloudSupport * db = new DropboxSupport();
-	while (isRunning)
-	{
-		db->PerformPolledUpdate();
-	}
-	delete db;
-	return B_OK;
 }
 
 void App::MessageReceived(BMessage *msg)
@@ -70,7 +85,7 @@ void App::MessageReceived(BMessage *msg)
 	{
 		case B_NODE_MONITOR:
 		{
-			LocalFilesystem::HandleNodeEvent(msg);
+			fileSystem->HandleNodeEvent(msg);
 			break;	
 		}
 		case B_QUIT_REQUESTED:

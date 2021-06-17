@@ -16,4 +16,6 @@ void LogInfoLine(const char * info);
 void SendNotification(const char * title, const char * content, bool error);
 void SendProgressNotification(const char * title, const char * content, const char * identifier, float progress);
 
+extern App * globalApp;
+
 #endif

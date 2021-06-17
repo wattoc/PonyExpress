@@ -17,6 +17,8 @@
 #define DROPBOX_UPLOAD_CHUNK 4194304
 #define DROPBOX_FOLDER "Dropbox/"
 
+#define DROPBOX_TIMESTAMP_STRING "%Y-%m-%dT%H:%M:%SZ"
+
 class DropboxSupport : public CloudSupport
 {
 public:
@@ -37,15 +39,17 @@ public:
 	void PerformPolledUpdate(void);
 	
 	bool PullMissing(const char * rootpath, BList & items);
-	bool SendMissing(const char * rootpath, BList & items);
 		
 	//file get/put/delete
-	bool Upload(const char * file, const char * destfullpath, time_t modified, off_t size);
+	bool Upload(const char * file, const char * destfullpath, time_t modified, off_t size, BString & commitentry);
 	bool Download(const char * file, const char * destfullpath);
-	bool CreatePath(const char * destfullpath);
+	bool CreatePaths(BList & paths);
 	bool DownloadPath(const char * path);
-	bool DeletePath(const char * path);
-	bool Move(const char * from, const char * to);
+	bool DeletePaths(BList & paths);
+	bool MovePaths(BList & from, BList & to);
+	
+	bool UploadBatch(BList & commitdata, BString & asyncjobid);
+	bool UploadBatchCheck(const char * asyncjobid, BString & jobstatus);
 	
 	static time_t ConvertTimestampToSystem(const char * timestamp);
 	static const char * ConvertSystemToTimestamp(time_t system);
@@ -54,7 +58,6 @@ private:
 	static bool FillWithRandomData(const char* randomBytes, int length);
 	static BString accessToken;
 	static time_t tokenExpiry;
-
 };
 
 #endif // _H

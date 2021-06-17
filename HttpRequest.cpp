@@ -5,6 +5,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+bool HttpRequest::GlobalInit()
+{
+	return curl_global_init(CURL_GLOBAL_ALL) != 0;
+}
+
+void HttpRequest::GlobalCleanup()
+{
+	curl_global_cleanup();
+}
+
 HttpRequest::HttpRequest()
 {
 	curl_handle = curl_easy_init();
@@ -53,57 +63,66 @@ bool HttpRequest::Post(const char * url, const char * postdata, int postlength, 
 {
 	CURLcode res;
 	bool result = false;
+	bool retry = false;
 	struct MemoryStruct chunk;
 	struct curl_slist *headers = NULL;
 	
-	chunk.memory = (char*)malloc(1);  /* will be grown as needed by the realloc above */
-  	chunk.size = 0;    /* no data at this point */
 
-	if (curl_handle == NULL) 
+	do
 	{
-		curl_handle = curl_easy_init();
-	} else {
-		curl_easy_reset(curl_handle);
+		if (curl_handle) 
+		{
+			chunk.memory = (char*)malloc(1);  /* will be grown as needed by the realloc above */
+  			chunk.size = 0;    /* no data at this point */
+
+			curl_easy_reset(curl_handle);
+			curl_easy_setopt(curl_handle, CURLOPT_URL, url);
+			if (postlength>0) {
+				curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDSIZE, postlength);
+				curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, postdata);
+			}
+			
+			if (authToken->Length() > 0) {
+				curl_easy_setopt(curl_handle, CURLOPT_XOAUTH2_BEARER, authToken->String());
+				curl_easy_setopt(curl_handle, CURLOPT_HTTPAUTH, CURLAUTH_BEARER);
+			}
+			
+			if (addExpectJson) {
+				headers = curl_slist_append(headers, "Expect:");
+				headers = curl_slist_append(headers, "Content-Type: application/json");
+				curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);			
+			}		
+			/* send all data to this function  */
+	  		curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+	
+		   	/* we pass our 'chunk' struct to the callback function */
+	  		curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+	
+	  		/* some servers don't like requests that are made without a user-agent
+	     		field, so we provide one */
+	  		curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
+			
+			/* get it! */
+			res = curl_easy_perform(curl_handle);
+	
+			/* check for errors */
+	  		if(res == CURLE_OK) {
+	  			response = BString(chunk.memory, chunk.size);
+	  			curl_off_t wait = 0;
+				curl_easy_getinfo(curl_handle, CURLINFO_RETRY_AFTER, &wait);
+				if (wait>0)
+				{
+					retry = true;
+					sleep(wait);	
+				}
+				result = true;
+			}
+			curl_slist_free_all(headers);
+			free(chunk.memory);
+		}
 	}
-	if (curl_handle) 
-	{
-		curl_easy_setopt(curl_handle, CURLOPT_URL, url);
-		if (postlength>0) {
-			curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDSIZE, postlength);
-			curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, postdata);
-		}
-		
-		if (authToken->Length() > 0) {
-			curl_easy_setopt(curl_handle, CURLOPT_XOAUTH2_BEARER, authToken->String());
-			curl_easy_setopt(curl_handle, CURLOPT_HTTPAUTH, CURLAUTH_BEARER);
-		}
-		
-		if (addExpectJson) {
-			headers = curl_slist_append(headers, "Expect:");
-			headers = curl_slist_append(headers, "Content-Type: application/json");
-			curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);			
-		}		
-		/* send all data to this function  */
-  		curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
-
-	   	/* we pass our 'chunk' struct to the callback function */
-  		curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
-
-  		/* some servers don't like requests that are made without a user-agent
-     		field, so we provide one */
-  		curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
-		
-		/* get it! */
-		res = curl_easy_perform(curl_handle);
-
-		/* check for errors */
-  		if(res == CURLE_OK) {
-  			response = BString(chunk.memory, chunk.size);
-			result = true;
-		}
-		curl_slist_free_all(headers);
-		free(chunk.memory);
-	}
+	while (retry);
+	
 	return result;
 }
 
@@ -196,52 +215,74 @@ size_t readFileCallbackLimit(char * buffer, size_t size, size_t nitems, void *in
 	return bytes_read;	
 }
 
-bool HttpRequest::Upload(const char * url, const char * headerdata, const char * fullPath, BString * authToken, off_t size)
+bool HttpRequest::Upload(const char * url, const char * headerdata, const char * fullPath, BString &response, BString * authToken, off_t size)
 {
 	FILE * file;
 	CURLcode res;
+	struct MemoryStruct chunk;
 	struct curl_slist *headers = NULL;
-
 	bool result = false;
-	file = fopen(fullPath, "rb");
-	
-	if (!file) {
-		return false;	
-	}
+	bool retry = false;
 
-	if (curl_handle) 
+	do 
 	{
-		curl_easy_reset(curl_handle);
-		curl_easy_setopt(curl_handle, CURLOPT_URL, url);
+		file = fopen(fullPath, "rb");
 		
-		curl_easy_setopt(curl_handle, CURLOPT_XOAUTH2_BEARER, authToken->String());
-		curl_easy_setopt(curl_handle, CURLOPT_HTTPAUTH, CURLAUTH_BEARER);
-		//all bearer requests send json
-		headers = curl_slist_append(headers, "Expect:");
-		headers = curl_slist_append(headers, "Content-Type: application/octet-stream");
-		headers = curl_slist_append(headers, headerdata);
-
-		curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);		
-		curl_easy_setopt(curl_handle, CURLOPT_POST, 1L);
-		
-  		curl_easy_setopt(curl_handle, CURLOPT_READDATA, (void *)file);
-  		curl_easy_setopt(curl_handle, CURLOPT_READFUNCTION, readFileCallback);
-  		
-		//curl_easy_setopt(curl_handle, CURLOPT_INFILESIZE_LARGE, (curl_off_t) size);
-  		/* some servers don't like requests that are made without a user-agent
-     		field, so we provide one */
-  		curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
-		
-		/* get it! */
-		res = curl_easy_perform(curl_handle);
-
-		/* check for errors */
-  		if(res == CURLE_OK) {
-			result = true;
+		if (!file) {
+			return false;	
 		}
-		fclose(file);
-		curl_slist_free_all(headers);
+	
+		if (curl_handle) 
+		{
+			chunk.memory = (char*)malloc(1);  /* will be grown as needed by the realloc above */
+  			chunk.size = 0;    /* no data at this point */
+
+			curl_easy_reset(curl_handle);
+			curl_easy_setopt(curl_handle, CURLOPT_URL, url);
+			
+			curl_easy_setopt(curl_handle, CURLOPT_XOAUTH2_BEARER, authToken->String());
+			curl_easy_setopt(curl_handle, CURLOPT_HTTPAUTH, CURLAUTH_BEARER);
+			//all bearer requests send json
+			headers = curl_slist_append(headers, "Expect:");
+			headers = curl_slist_append(headers, "Content-Type: application/octet-stream");
+			headers = curl_slist_append(headers, headerdata);
+	
+			curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);		
+			curl_easy_setopt(curl_handle, CURLOPT_POST, 1L);
+			
+	  		curl_easy_setopt(curl_handle, CURLOPT_READDATA, (void *)file);
+	  		curl_easy_setopt(curl_handle, CURLOPT_READFUNCTION, readFileCallback);
+	  		
+	  		curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+	  		curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+	
+			//curl_easy_setopt(curl_handle, CURLOPT_INFILESIZE_LARGE, (curl_off_t) size);
+	  		/* some servers don't like requests that are made without a user-agent
+	     		field, so we provide one */
+	  		curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
+			
+			/* get it! */
+			res = curl_easy_perform(curl_handle);
+	
+			/* check for errors */
+	  		if(res == CURLE_OK) {
+				response = BString(chunk.memory, chunk.size);
+				curl_off_t wait = 0;
+				curl_easy_getinfo(curl_handle, CURLINFO_RETRY_AFTER, &wait);
+				if (wait>0)
+				{
+					retry = true;
+					sleep(wait);	
+				}
+				result = true;
+			}
+			fclose(file);
+			free(chunk.memory);
+			curl_slist_free_all(headers);
+		}
 	}
+	while (retry);
+	
 	return result;
 }
 

@@ -40,13 +40,14 @@ Here you can set up your account on Dropbox
 ### Stuff to do
 - The code is quite messy and generally pretty horrible
 - Allow zipped downloads to improve speed
-- Actually support multiple threads in operations
-- Possibly start using batching too
+- Handle operations against folders better (eg. currently deletes each file in a folder, then the folder which isn't optimal.)
 - Allow resuming uploads/downloads
-- Improve Haiku integration (preferences app)
+- Record queues on exit so pending activity can be resumed generally
+- Improve Haiku integration (preferences app or notification area?), re-add notifications
 - Handle errors from Dropbox better and recover where possible
 - Handle collisions/sync issues
 - Potentially support for other cloud syncing services, should their APIs be easy enough to work with and support PKCE with OAUTH or something similar
+- Various bugs I haven't discovered yet
 
 ### Stuff I probably won't do
 - All the extended stuff, Paper, Teams, Requests, etc. support.  I only care about conveniently sharing files between Haiku and my myriad other desktops

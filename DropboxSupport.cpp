@@ -334,7 +334,7 @@ void DropboxSupport::PerformFullUpdate(bool forceFull)
 		sprintf(itemstoupdate, "%d local items to update\n", localItems.CountItems());
     	LogInfo(itemstoupdate);
 		PullMissing(DROPBOX_FOLDER, updateItems);
-		SendMissing(DROPBOX_FOLDER, localItems);
+		LocalFilesystem::SendMissing(Manager::DROPBOX, DROPBOX_FOLDER, localItems);
 
 		for(int i=0; i < localItems.CountItems(); i++)
 		{
@@ -345,7 +345,7 @@ void DropboxSupport::PerformFullUpdate(bool forceFull)
 		{
 			delete (BMessage*)items.ItemAtFast(i);
 		}
-				//update the lastLocalSync time
+		//update the lastLocalSync time
 		gSettings.Lock();
 		gSettings.lastLocalSync = time(NULL);
 		gSettings.SaveSettings();
@@ -385,15 +385,12 @@ bool DropboxSupport::PullMissing(const char * rootpath, BList & items)
 {
 	bool result = true;
 	BPath userpath;
-	float progress = 0;
 	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
 	{
 		userpath.Append(rootpath);
 		if (items.CountItems() > 0) 
 		for(int i=0; i < items.CountItems(); i++)
 		{	
-			progress = ((float)i) / items.CountItems();
-			SendProgressNotification("Remote update", "retrieving updates", "remote_update", progress);
 			BMessage * item = (BMessage*)items.ItemAtFast(i);
 			BEntry fsentry;
 			BString entryPath = item->GetString("path_display");
@@ -401,164 +398,94 @@ bool DropboxSupport::PullMissing(const char * rootpath, BList & items)
 			BString fullPath = BString(userpath.Path());
 			fullPath.Append(entryPath);
 			LocalFilesystem::AddToIgnoreList(fullPath.String());			
-			if (entryType=="file") {
+			if (entryType=="file") 
+			{
 				time_t sModified = ConvertTimestampToSystem(item->GetString("client_modified"));
-				result = result & Download(entryPath.String(), fullPath.String());
-				//set modified date
-				fsentry = BEntry(fullPath.String());
-				fsentry.SetModificationTime(sModified);
+				globalApp->cloudManager->QueueDownload(Manager::DROPBOX, entryPath.String(), fullPath.String(), sModified);
 			}
-			// we don't support DIRs by Zip yet
-		}
-		sleep(1);
-		for(int i=0; i < items.CountItems(); i++)
-		{		
-			BMessage * item = (BMessage*)items.ItemAtFast(i);
-			BEntry fsentry;
-			BString entryPath = item->GetString("path_display");
-			BString entryType = item->GetString(".tag");
-			BString fullPath = BString(userpath.Path());
-			fullPath.Append(entryPath);
-			fsentry = BEntry(fullPath.String());
-			if (fsentry.IsDirectory()) {
-				LogInfo("Watching directory: ");
-				LogInfoLine(fullPath);
+			else
+			{
+				//start watching folder immediately
+				LocalFilesystem::WatchEntry(&fsentry, WATCH_FLAGS);
+				LocalFilesystem::RemoveFromIgnoreList(fullPath.String());	
 			}
-			LocalFilesystem::WatchEntry(&fsentry, WATCH_FLAGS);
-			LocalFilesystem::RemoveFromIgnoreList(fullPath.String());		
 		}
-		
-		if (items.CountItems() > 0)
-			SendProgressNotification("Remote update", "completing updates", "remote_update", 1);
-
 	}
 	return result;	
 }
 
-bool DropboxSupport::SendMissing(const char * rootpath, BList & items)
+bool DropboxSupport::Upload(const char * file, const char * destfullpath, time_t modified, off_t size, BString & commitentry)
 {
-	bool result = true;
-	BPath userpath;
-	float progress = 0;
-	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
-	{
-		userpath.Append(rootpath);
-		for(int i=0; i < items.CountItems(); i++)
-		{	
-			progress = ((float)i) / items.CountItems();
-			SendProgressNotification("Local update", "sending updates", "local_update", progress);
-			BEntry fsentry;
-			time_t sModified;
-			off_t sSize = 0;
-
-			BMessage * item = (BMessage*)items.ItemAtFast(i);
-			BString entryPath = item->GetString("path_display");
-			BString entryType = item->GetString(".tag");
-			BString fullPath = BString(userpath.Path());
-			
-			fsentry = BEntry(fullPath.String());
-			fsentry.GetModificationTime(&sModified);
-			fsentry.GetSize(&sSize);
-			fullPath.Append(entryPath);
-			
-			if (entryType=="file") {
-				result &= Upload(fullPath.String(), entryPath.String(), sModified, sSize);
-			} else if (entryType=="folder") {
-				result &= CreatePath(entryPath.String());
-			}
-			// we don't support DIRs by Zip yet
-		}
-		if (items.CountItems() > 0) 
-			SendProgressNotification("Local update", "sending updates", "local_update", progress);
-		//update the lastLocalSync time
-		gSettings.Lock();
-		gSettings.lastLocalSync = time(NULL);
-		gSettings.SaveSettings();
-		gSettings.Unlock();
-	}
-	return result;	
-}
-
-bool DropboxSupport::Upload(const char * file, const char * destfullpath, time_t modified, off_t size)
-{
+	BString response;
+	BMessage jsonContent;
 	BString url = BString(DROPBOX_CONTENT_URL);
 	BString headerdata = BString("Dropbox-API-Arg: ");
 	BString commitdata = BString("\{\"path\": \"");
 	BString clientmodified = BString(ConvertSystemToTimestamp(modified));
+	BString sessionid = BString("");
 	HttpRequest * req = new HttpRequest();
 	commitdata.Append(destfullpath);
 	commitdata.Append("\", \"mode\": \"overwrite\", \"autorename\": true, \"mute\": false, \"strict_conflict\": false, \"client_modified\": \"");
 	commitdata.Append(clientmodified);
 	commitdata.Append("\"");
 	commitdata.Append("}");
-	if (size <= 157286400) {
-		bool result; 
-		headerdata.Append(commitdata);
-		url.Append("2/files/upload");
-		GetToken();
-		SendNotification("Upload", destfullpath, false);
-		result = req->Upload(url.String(),headerdata.String(), file, &accessToken, size);
-		delete req;
-		return result;
-	} else 
-	{
-		// need to use sessions to do > 150MB
-		BString response;
-		BMessage jsonContent;
-	    bool result = true;
-		off_t remainingsize = size;
-		off_t offset = 0;
-		float progress = 0;
+	//everything is done as a chunked upload so we can get
+	//session id and do a single commit on bulk
+    bool result = true;
+	off_t remainingsize = size;
+	off_t offset = 0;
+	float progress = 0;
+	if (remainingsize - DROPBOX_UPLOAD_CHUNK > 0) {
 		headerdata.Append("\{\"close\": false }");
-		url.Append("2/files/upload_session/start");
-		BString sessionid = BString("");
-		while (remainingsize > 0 && result)
-		{
-			GetToken();
-			result &= req->UploadChunked(url.String(), headerdata.String(), file, &accessToken, DROPBOX_UPLOAD_CHUNK, offset, response);
-			if (sessionid.Length() == 0)
-			{
-				status_t status = BJson::Parse(response.String(),jsonContent);
-				if (status == B_OK)
-					sessionid = jsonContent.GetString("session_id");
-			}
-			progress = offset/(double)size;
-			SendProgressNotification("Bulk Upload", destfullpath, destfullpath, progress);
-
-			offset += DROPBOX_UPLOAD_CHUNK;
-			remainingsize = size - offset;
-			if (remainingsize > 0)
-			{
-				headerdata = BString("Dropbox-API-Arg: ");
-				headerdata.Append("\{\"cursor\": \{\"session_id\": \"");
-				headerdata.Append(sessionid);
-				headerdata.Append("\", \"offset\": ");
-				headerdata << offset;
-				headerdata.Append("}, ");
-				url = BString(DROPBOX_CONTENT_URL);
-				url.Append("2/files/upload_session/");
-				if (remainingsize <= DROPBOX_UPLOAD_CHUNK) {				
-					url.Append("finish");
-					headerdata.Append(" \"commit\": ");
-					headerdata.Append(commitdata);
-					headerdata.Append("}");
-				}
-				else 
-				{
-					
-					url.Append("append_v2");	
-					headerdata.Append(" \"close\": false }");
-					
-				}
-			}
-		}
-		if (result)
-		{
-			SendProgressNotification("Bulk Upload", destfullpath, destfullpath, 1);
-		}
-		delete req;
-		return result;
+	} else {
+		headerdata.Append("\{\"close\": true }");
 	}
+	url.Append("2/files/upload_session/start");
+
+	while (remainingsize > 0 && result)
+	{
+		GetToken();
+		result &= req->UploadChunked(url.String(), headerdata.String(), file, &accessToken, DROPBOX_UPLOAD_CHUNK, offset, response);
+		if (sessionid.Length() == 0)
+		{
+			status_t status = BJson::Parse(response.String(),jsonContent);
+			if (status == B_OK)
+				sessionid = jsonContent.GetString("session_id");
+		}
+		progress = offset/(double)size;
+
+		offset += DROPBOX_UPLOAD_CHUNK;
+		remainingsize = size - offset;
+		if (remainingsize > 0)
+		{
+			headerdata = BString("Dropbox-API-Arg: ");
+			headerdata.Append("\{\"cursor\": \{\"session_id\": \"");
+			headerdata.Append(sessionid);
+			headerdata.Append("\", \"offset\": ");
+			headerdata << offset;
+			headerdata.Append("}, ");
+			url = BString(DROPBOX_CONTENT_URL);
+			url.Append("2/files/upload_session/append_v2");
+			if (remainingsize <= DROPBOX_UPLOAD_CHUNK) {
+				headerdata.Append(" \"close\": true }");
+			}
+			else 
+			{
+				headerdata.Append(" \"close\": false }");
+			}
+		}
+	}
+	
+	commitentry.Append("\{\"cursor\": \{\"session_id\": \"");		
+	commitentry.Append(sessionid);
+	commitentry.Append("\", \"offset\": ");
+	commitentry << size;
+	commitentry.Append(" }, \"commit\": ");
+	commitentry.Append(commitdata);
+	commitentry.Append("}");
+	delete req;
+	return result;
+
 }
 
 bool DropboxSupport::Download(const char * file, const char * destfullpath)
@@ -576,7 +503,7 @@ bool DropboxSupport::Download(const char * file, const char * destfullpath)
 	return result;
 }
 
-bool DropboxSupport::CreatePath(const char * destfullpath)
+bool DropboxSupport::CreatePaths(BList & paths)
 {
 	HttpRequest * req = new HttpRequest();
 	bool result;
@@ -584,10 +511,19 @@ bool DropboxSupport::CreatePath(const char * destfullpath)
 	BMessage jsonContent;
 	BString postData = BString("");
 	BString url = BString(DROPBOX_API_URL);
-	url.Append("2/files/create_folder_v2");
-	postData.Append("\{\"path\": \"");
-	postData.Append(destfullpath);
-	postData.Append("\", \"autorename\": false }");
+	url.Append("2/files/create_folder_batch");
+	postData.Append("\{\"paths\": [");
+	for (int i=0; i< paths.CountItems(); i++)
+	{
+		postData.Append("\"");
+		postData.Append(((BString *)paths.ItemAt(i))->String());
+		postData.Append("\"");
+		if (i < (paths.CountItems()-1))
+		{
+			postData.Append(",");	
+		}
+	}
+	postData.Append("], \"autorename\": false, \"force_async\": false }");
 	GetToken();
 	result = req->Post(url.String(), postData.String(), postData.Length(), response, &accessToken, true);
 	delete req;
@@ -600,7 +536,7 @@ bool DropboxSupport::DownloadPath(const char * path)
 	return false;
 }
 
-bool DropboxSupport::DeletePath(const char * path)
+bool DropboxSupport::DeletePaths(BList & paths)
 {
 	HttpRequest * req = new HttpRequest();
 	bool result;
@@ -608,18 +544,42 @@ bool DropboxSupport::DeletePath(const char * path)
 	BMessage jsonContent;
 	BString postData = BString("");
 	BString url = BString(DROPBOX_API_URL);
-	url.Append("2/files/delete_v2");
-	postData.Append("\{\"path\": \"");
-	postData.Append(path);
-	postData.Append("\" }");
-	GetToken();
+	url.Append("2/files/delete_batch");
+	postData.Append("{\"entries\": [");
+	
+	for (int i=0; i< paths.CountItems(); i++)
+	{
+		BString * path;
+		path = (BString *)paths.ItemAtFast(i);
+		postData.Append("{ \"path\": \"");
+		postData.Append(path->String());
+		postData.Append("\"}");
+		if (i < (paths.CountItems()-1))
+		{
+			postData.Append(",");	
+		}
+	}
+	postData.Append("] }");
 
+	GetToken();
 	result = req->Post(url.String(), postData.String(), postData.Length(), response, &accessToken, true); 
+	if (result)
+	{
+		status_t status = BJson::Parse(response.String(),jsonContent);	
+		if (status == B_OK) {
+			BMessage error;
+			if (jsonContent.FindMessage("error", 0, &error) == B_OK)
+			{
+				// do something with errors?
+			}
+		}
+	}	
+	
 	delete req;
 	return result;
 }
 
-bool DropboxSupport::Move(const char * from, const char * to)
+bool DropboxSupport::MovePaths(BList & from, BList & to)
 {
 	HttpRequest * req = new HttpRequest();
 	bool result;
@@ -628,11 +588,22 @@ bool DropboxSupport::Move(const char * from, const char * to)
 	BString postData = BString("");
 	BString url = BString(DROPBOX_API_URL);
 	url.Append("2/files/move_v2");
-	postData.Append("\{\"from_path\": \"");
-	postData.Append(from);
-	postData.Append("\", \"to_path\": \"");
-	postData.Append(to);	
-	postData.Append("\" }");
+	postData.Append("{\"entries\": \"[");
+	
+	for (int i=0; i< from.CountItems(); i++)
+	{
+		postData.Append("\{\"from_path\": \"");
+		postData.Append(((BString *)from.ItemAt(i))->String());
+		postData.Append("\", \"to_path\": \"");
+		postData.Append(((BString *)to.ItemAt(i))->String());	
+		postData.Append("\" }");
+		if (i < (from.CountItems()-1))
+		{
+			postData.Append(",");	
+		}
+	}
+	
+	postData.Append("] }");
 	
 	GetToken();
 	result = req->Post(url.String(), postData.String(), postData.Length(), response, &accessToken, true);
@@ -640,10 +611,85 @@ bool DropboxSupport::Move(const char * from, const char * to)
 	return result;
 }
 
+bool DropboxSupport::UploadBatch(BList & commitdata, BString & asyncjobid)
+{
+	HttpRequest * req = new HttpRequest();
+	bool result;
+	BString response;
+	BMessage jsonContent;
+	BString postData = BString("");
+	BString url = BString(DROPBOX_API_URL);
+	url.Append("2/files/upload_session/finish_batch");
+	postData.Append("{\"entries\": [");
+	
+	for (int i=0; i< commitdata.CountItems(); i++)
+	{
+		BString * commit = (BString *)commitdata.ItemAtFast(i);
+		postData.Append(commit->String());
+		if (i < (commitdata.CountItems()-1))
+		{
+			postData.Append(",");	
+		}
+	}
+	postData.Append("] }");
+
+	GetToken();
+	result = req->Post(url.String(), postData.String(), postData.Length(), response, &accessToken, true); 
+	if (result)
+	{
+		status_t status = BJson::Parse(response.String(),jsonContent);	
+		if (status == B_OK) {
+			BMessage error;
+			if (jsonContent.FindMessage("error", 0, &error) == B_OK)
+			{
+				// do something with errors?
+			}
+			asyncjobid.Append(jsonContent.GetString("async_job_id"));
+		}
+	}	
+	
+	delete req;
+	return result;
+}
+
+bool DropboxSupport::UploadBatchCheck(const char * asyncjobid, BString & jobstatus)
+{
+	HttpRequest * req = new HttpRequest();
+	bool result;
+	BString response;
+	BMessage jsonContent;
+	BString postData = BString("");
+	BString url = BString(DROPBOX_API_URL);
+	url.Append("2/files/upload_session/finish_batch/check");
+	postData.Append("{\"async_job_id\": \"");
+	postData.Append(asyncjobid);
+	postData.Append("\"}");
+
+	GetToken();
+	result = req->Post(url.String(), postData.String(), postData.Length(), response, &accessToken, true); 
+	if (result)
+	{
+		status_t status = BJson::Parse(response.String(),jsonContent);	
+		if (status == B_OK) {
+			BMessage error;
+			if (jsonContent.FindMessage("error", 0, &error) == B_OK)
+			{
+				jobstatus.Append(error.GetString(".tag"));
+			} else {
+				jobstatus.Append(jsonContent.GetString(".tag"));
+			}
+		}
+	}	
+	
+	delete req;
+	return result;
+}
+
+
 time_t DropboxSupport::ConvertTimestampToSystem(const char * timestamp)
 {
 	struct tm tm;
-	strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ", &tm);
+	strptime(timestamp, DROPBOX_TIMESTAMP_STRING, &tm);
 	return mktime(&tm);
 }
 
@@ -652,7 +698,7 @@ const char * DropboxSupport::ConvertSystemToTimestamp(time_t system)
 	struct tm * tm;
 	char * buffer = new char[80];
 	tm = gmtime(&system);
-	strftime(buffer, 80, "%Y-%m-%dT%H:%M:%SZ", tm);
+	strftime(buffer, 80, DROPBOX_TIMESTAMP_STRING, tm);
 	return buffer;
 }
 

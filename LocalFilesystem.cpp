@@ -6,8 +6,6 @@
 #include <NodeMonitor.h>
 #include <String.h>
 
-#include "CloudSupport.h"
-#include "DropboxSupport.h"
 #include "Globals.h"
 
 BList LocalFilesystem::tracked_entries = BList();
@@ -162,6 +160,45 @@ bool LocalFilesystem::ResolveUnreferencedLocals(const char * rootPath, const cha
 	return false;
 }
 
+bool LocalFilesystem::SendMissing(Manager::SupportedClouds cloud, const char * rootpath, BList & items)
+{
+	bool result = true;
+	BPath userpath;
+	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
+	{
+		userpath.Append(rootpath);
+		for(int i=0; i < items.CountItems(); i++)
+		{	
+			BEntry fsentry;
+			time_t sModified;
+			off_t sSize = 0;
+
+			BMessage * item = (BMessage*)items.ItemAtFast(i);
+			BString entryPath = item->GetString("path_display");
+			BString entryType = item->GetString(".tag");
+			BString fullPath = BString(userpath.Path());
+			
+			fsentry = BEntry(fullPath.String());
+			fsentry.GetModificationTime(&sModified);
+			fsentry.GetSize(&sSize);
+			fullPath.Append(entryPath);
+			
+			if (entryType=="file") {
+				globalApp->cloudManager->QueueUpload(cloud, fullPath.String(), entryPath.String(), sModified, sSize);
+			} else if (entryType=="folder") {
+				globalApp->cloudManager->QueueCreate(cloud, entryPath.String());
+			}
+			// we don't support DIRs by Zip yet
+		}
+		//update the lastLocalSync time
+		gSettings.Lock();
+		gSettings.lastLocalSync = time(NULL);
+		gSettings.SaveSettings();
+		gSettings.Unlock();
+	}
+	return result;	
+}
+
 bool LocalFilesystem::IsInRemoteList(const char * path, time_t localModified, BList & remote)
 {
 		for(int i=0; i < remote.CountItems(); i++)
@@ -233,7 +270,7 @@ void LocalFilesystem::RecursivelyWatchDirectory(const char * fullPath, uint32 fl
 	}
 }
 
-void LocalFilesystem::RecursiveAddToCloud(CloudSupport * db, const char *fullPath) 
+void LocalFilesystem::RecursiveAddToCloud(const char *fullPath) 
 {
 	BDirectory directory;
 	BEntry entry;
@@ -248,8 +285,8 @@ void LocalFilesystem::RecursiveAddToCloud(CloudSupport * db, const char *fullPat
 		ConvertFullPathToDropboxRelativePath(dbpath);
 		if (entry.IsDirectory())
 		{
-			db->CreatePath(dbpath);
-			RecursiveAddToCloud(db, userpath.Path());
+			globalApp->cloudManager->QueueCreate(cloud, dbpath);
+			RecursiveAddToCloud(userpath.Path());
 		}
 		else	
 		{
@@ -257,7 +294,8 @@ void LocalFilesystem::RecursiveAddToCloud(CloudSupport * db, const char *fullPat
 			time_t modified;
 			entry.GetModificationTime(&modified);
 			entry.GetSize(&size);
-			db->Upload(userpath.Path(), dbpath, modified, size);
+			
+			globalApp->cloudManager->QueueUpload(cloud, userpath.Path(), dbpath, modified, size);
 		}
 		WatchEntry(&entry, WATCH_FLAGS);	
 	}
@@ -377,24 +415,24 @@ void LocalFilesystem::HandleCreated(BMessage * msg)
 	entry_ref ref;
 	BPath path;
 	const char * name;
-	CloudSupport * db = new DropboxSupport();
-	
 	msg->FindInt32("device", &ref.device);
 	msg->FindInt64("directory", &ref.directory);
 	msg->FindString("name", &name);
 	ref.set_name(name);
-	BEntry new_file = BEntry(&ref);			
+	// doesn't support symlinks currently, so no "copying" folders from Desktop
+	BEntry new_file = BEntry(&ref);
 	new_file.GetPath(&path);
 	BString dbpath = BString(path.Path());
+	BString fullpath = BString(path.Path());
 	ConvertFullPathToDropboxRelativePath(dbpath);
 	
 	if (new_file.IsDirectory())
 	{
 		if (!IsInIgnoredList(path.Path())) {
-	 		db->CreatePath(dbpath);
+	 		globalApp->cloudManager->QueueCreate(cloud, dbpath);
 			LogInfoLine("Entry Folder Created");
 			//need to recursively upload folder contents
-			RecursiveAddToCloud(db, path.Path());
+			RecursiveAddToCloud(path.Path());
 			WatchEntry(&new_file, WATCH_FLAGS);
 		}
 	}
@@ -405,12 +443,11 @@ void LocalFilesystem::HandleCreated(BMessage * msg)
 		new_file.GetModificationTime(&modified);
 		new_file.GetSize(&size);
 		if (!IsInIgnoredList(path.Path())) {
-			db->Upload(path.Path(), dbpath, modified, size); 
+			globalApp->cloudManager->QueueUpload(cloud, fullpath, dbpath, modified, size); 
 			LogInfoLine("Entry File Created");
 		}
 		WatchEntry(&new_file, WATCH_FLAGS);
 	}
-	delete db;				
 }
 
 void LocalFilesystem::HandleMoved(BMessage * msg)
@@ -424,8 +461,6 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 	BString dbpath = BString(DROPBOX_FOLDER);
 	trackeddata * tracked_file;
 
-	CloudSupport * db = new DropboxSupport();
-	
 	ApplyFullPathToRelativeBasePath(dbpath);
 	dbdirectory = BDirectory(dbpath);
 	
@@ -452,18 +487,19 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 
 			// moving into DropBox
 			to_entry.GetPath(&path);
+			BString fullpath = BString(path.Path());
 			BString topath = BString(path.Path());
 			ConvertFullPathToDropboxRelativePath(topath);
 			to_entry.GetModificationTime(&modified);
 			to_entry.GetSize(&size);
-			if (!IsInIgnoredList(path.Path())) {
+			if (!IsInIgnoredList(fullpath)) {
 				LogInfoLine("Move into DropBox");
 				if (to_entry.IsDirectory())
 				{
 					//upload contents of directory also as it's not being tracked yet
-					RecursiveAddToCloud(db, path.Path());
+					RecursiveAddToCloud(fullpath);
 				} else {
-					db->Upload(path.Path(), topath, modified, size); 					
+					globalApp->cloudManager->QueueUpload(cloud, fullpath, topath, modified, size); 					
 				}
 				WatchEntry(&to_entry, WATCH_FLAGS);
 			}
@@ -479,7 +515,7 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 			StopWatchingNodeRef(&tracked_file->nref);
 			if (!IsInIgnoredList(path.Path())) {
 				LogInfoLine("Move within DropBox");
-				db->Move(frompath, topath);
+				globalApp->cloudManager->QueueMove(cloud, frompath, topath);
 				WatchEntry(&to_entry, WATCH_FLAGS);
 			}
 		}
@@ -499,14 +535,12 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 					{
 						StopWatchingNodeRef(&tracked_file->nref);		
 					}
-					db->DeletePath(frompath);
+					globalApp->cloudManager->QueueDelete(cloud, frompath);
 					LogInfo(frompath);
 					LogInfoLine(" Remove from DropBox");
 				}
 			}
 	}
-	
-	delete db;				
 }
 
 void LocalFilesystem::HandleRemoved(BMessage * msg)
@@ -515,8 +549,6 @@ void LocalFilesystem::HandleRemoved(BMessage * msg)
 	trackeddata * td;
 	BEntry entry;
 	BString path;
-	
-	CloudSupport * db = new DropboxSupport();
 	
 	msg->FindInt64("node", &nref.node);
 	msg->FindInt32("device", &nref.device);
@@ -534,13 +566,12 @@ void LocalFilesystem::HandleRemoved(BMessage * msg)
 			StopWatchingNodeRef(&td->nref);		
 		}
 		ConvertFullPathToDropboxRelativePath(path);			
-		db->DeletePath(path);
+		globalApp->cloudManager->QueueDelete(cloud, path);
 		LogInfo(path);
 		LogInfoLine(" Entry Removed");
 	}
-
-	delete db;
 }
+
 void LocalFilesystem::HandleChanged(BMessage * msg)
 {
 	BPath path;
@@ -549,8 +580,6 @@ void LocalFilesystem::HandleChanged(BMessage * msg)
 	BEntry entry;
 	time_t modified;
 	off_t size;
-	
-	CloudSupport * db = new DropboxSupport();
 	
 	msg->FindInt64("node", &nref.node);
 	msg->FindInt32("device", &nref.device);
@@ -564,11 +593,10 @@ void LocalFilesystem::HandleChanged(BMessage * msg)
 		entry.GetModificationTime(&modified);
 		entry.GetSize(&size);
 		if (!IsInIgnoredList(td->path->Path())) {
-			db->Upload(td->path->Path(), dbpath, modified, size); 
+			globalApp->cloudManager->QueueUpload(cloud, td->path->Path(), dbpath, modified, size); 
 			LogInfoLine("Entry Changed");
 		}
 	}
-	delete db;
 }
 
 void LocalFilesystem::HandleNodeEvent(BMessage *msg)
