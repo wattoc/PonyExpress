@@ -185,10 +185,7 @@ size_t readFileCallback(char * buffer, size_t size, size_t nitems, void *instrea
 	return bytes_read;	
 }
 
-size_t readLimitCallbackCount;
-size_t maxchunkSize;
-
-size_t readFileCallbackLimit(char * buffer, size_t size, size_t nitems, void *instream)
+size_t HttpRequest::readFileCallbackLimit(char * buffer, size_t size, size_t nitems)
 {
 	size_t bytes_read;
 	size_t to_read;
@@ -201,14 +198,14 @@ size_t readFileCallbackLimit(char * buffer, size_t size, size_t nitems, void *in
 	if (to_read > maxchunkSize)
 	{
 		to_read = maxchunkSize;	
-	} else {
-		if ((to_read + readLimitCallbackCount) > maxchunkSize)
-		{
-			to_read = maxchunkSize - readLimitCallbackCount;	
-		}
 	}
 	
-	bytes_read = fread(buffer, 1, to_read, (FILE *)instream);
+	if ((to_read + readLimitCallbackCount) > maxchunkSize)
+	{
+		to_read = maxchunkSize - readLimitCallbackCount;	
+	}
+		
+	bytes_read = fread(buffer, 1, to_read, readFileCallbackFile);
 
 	readLimitCallbackCount += bytes_read;
 
@@ -286,9 +283,13 @@ bool HttpRequest::Upload(const char * url, const char * headerdata, const char *
 	return result;
 }
 
+size_t HttpRequest::CallMemberReadFileCallback(void * buffer, size_t sz, size_t n, void *f)
+{
+	return static_cast<HttpRequest*>(f)->readFileCallbackLimit((char *)buffer, sz, n);
+}
+
 bool HttpRequest::UploadChunked(const char * url, const char * headerdata, const char * fullPath, BString * authToken, size_t maxchunksize, off_t offset, BString & response)
 {
-	FILE * file;
 	CURLcode res;
 	struct MemoryStruct chunk;
 	struct curl_slist *headers = NULL;
@@ -297,14 +298,14 @@ bool HttpRequest::UploadChunked(const char * url, const char * headerdata, const
   	chunk.size = 0;    /* no data at this point */
   	maxchunkSize = maxchunksize;
 	bool result = false;
-	file = fopen(fullPath, "rb");
+	readFileCallbackFile = fopen(fullPath, "rb");
 	
-	if (!file) {
+	if (!readFileCallbackFile) {
 		return false;	
 	}
 	
 	// bump file forward to offset
-	fseek(file, offset, SEEK_SET);
+	fseek(readFileCallbackFile, offset, SEEK_SET);
 
 	if (curl_handle) 
 	{
@@ -321,8 +322,8 @@ bool HttpRequest::UploadChunked(const char * url, const char * headerdata, const
 		curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);		
 		curl_easy_setopt(curl_handle, CURLOPT_POST, 1L);
 		
-  		curl_easy_setopt(curl_handle, CURLOPT_READDATA, (void *)file);
-  		curl_easy_setopt(curl_handle, CURLOPT_READFUNCTION, readFileCallbackLimit);
+  		curl_easy_setopt(curl_handle, CURLOPT_READDATA, (void *)this);
+  		curl_easy_setopt(curl_handle, CURLOPT_READFUNCTION, CallMemberReadFileCallback);
   				/* send all data to this function  */
   		curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
 
@@ -342,7 +343,7 @@ bool HttpRequest::UploadChunked(const char * url, const char * headerdata, const
 			result = true;
   			response = BString(chunk.memory, chunk.size);
 		}
-		fclose(file);
+		fclose(readFileCallbackFile);
 		free(chunk.memory);
 		curl_slist_free_all(headers);
 	}

@@ -167,14 +167,11 @@ int Manager::ManagerThread_func()
 		}
 		
 		//spin up the upload manager if we can
-		while (get_thread_info(uploadManagerThread, &info) == B_OK && (info.state == B_THREAD_RECEIVING || info.state == B_THREAD_RUNNING))
+		if (get_thread_info(uploadManagerThread, &info) != B_OK)
 		{
-			sleep(sleepActivity);	
-		}		
-		
-		uploadManagerThread = spawn_thread(UploadThread_static, "batch upload", B_LOW_PRIORITY, (void *)this);
-		resume_thread(uploadManagerThread);
-		
+			uploadManagerThread = spawn_thread(UploadThread_static, "batch upload", B_LOW_PRIORITY, (void *)this);
+			resume_thread(uploadManagerThread);
+		}
 
 		//check if we have any new activities added after doing all this stuff
 		if (ActivityTotal() == 0) {
@@ -422,6 +419,12 @@ int Manager::UploadThread_func()
 			}
 		}
 		
+		//dunno why but seems like we still don't get all the commits in
+		while(uploadCommits.CountItems() < itemcount)
+		{
+			sleep(2);	
+		}
+		
 		cs = GetCloudController(runningCloud);
 		uploadCommitLocker->Lock();
 		
@@ -445,7 +448,11 @@ int Manager::UploadThread_func()
 		}
 		uploadCommits.MakeEmpty();
 		uploadCommitLocker->Unlock();
+		queuedUploadsLocker->Lock();
 		delete queuedUploads;
+		queuedUploadsLocker->Unlock();
+		//kick off manager again as it may have new uploads to deal with it couldn't pick up while we were running
+		TrySpawnWorker();
 	}	
 	return B_OK;
 }

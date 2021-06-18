@@ -22,7 +22,11 @@ public:
 	static void GlobalCleanup(void);
 private:
 	CURL *curl_handle = NULL;
-
+	FILE * readFileCallbackFile;
+	size_t readLimitCallbackCount;
+	size_t maxchunkSize;
+	static size_t CallMemberReadFileCallback(void * buffer, size_t sz, size_t n, void *f);
+	size_t readFileCallbackLimit(char * buffer, size_t size, size_t nitems);
 };
 
 
