@@ -1,5 +1,7 @@
 #include "Manager.h"
 
+#include <FindDirectory.h>
+
 #include "DropboxSupport.h"
 #include "Globals.h"
 
@@ -14,6 +16,7 @@ Manager::Manager(SupportedClouds cloud, int maxWorkerThreads)
 {
 	maxThreads = maxWorkerThreads;
 	runningCloud = cloud;
+	fileSystem = new LocalFilesystem(cloud, CloudPaths[cloud]);
 	uploadCommits = BList();
 	uploadasyncjobid = BString("");
 	uploadCommitLocker = new BLocker(true);
@@ -28,6 +31,7 @@ Manager::~Manager()
 	send_data(managerThread, KILL_THREAD, NULL, 0);	
 	delete uploadCommitLocker;
 	delete queuedUploadsLocker;
+	delete fileSystem;
 }
 
 Manager::Activity::~Activity()
@@ -35,6 +39,122 @@ Manager::Activity::~Activity()
 	delete sourcePath;
 	delete destPath;
 }
+
+void Manager::PerformFullUpdate(bool forceFull)
+{
+		CloudSupport * cs;
+		BList items = BList();
+		BList updateItems = BList();
+		BList localItems = BList();
+		
+		cs = GetCloudController(runningCloud);
+		
+		cs->GetChanges(items, forceFull);
+
+		for(int i=0; i < items.CountItems(); i++)
+		{
+			if (fileSystem->TestLocation((BMessage*)items.ItemAtFast(i)))
+				updateItems.AddItem(items.ItemAtFast(i));
+		}
+		char itemstoupdate[40];
+		sprintf(itemstoupdate, "%d remote items to update\n", updateItems.CountItems());
+    	LogInfo(itemstoupdate);
+		fileSystem->ResolveUnreferencedLocals("", items, localItems, forceFull);
+		sprintf(itemstoupdate, "%d local items to update\n", localItems.CountItems());
+    	LogInfo(itemstoupdate);
+		PullMissing(updateItems);
+		fileSystem->SendMissing(localItems);
+
+		for(int i=0; i < localItems.CountItems(); i++)
+		{
+			delete (BMessage*)localItems.ItemAtFast(i);
+		}
+
+		for(int i=0; i < items.CountItems(); i++)
+		{
+			delete (BMessage*)items.ItemAtFast(i);
+		}
+		//update the lastLocalSync time
+		gSettings.Lock();
+		gSettings.lastLocalSync = time(NULL);
+		gSettings.SaveSettings();
+		gSettings.Unlock();
+		
+		delete cs;
+
+}
+
+void Manager::PerformPolledUpdate()
+{
+		CloudSupport * cs;
+
+		BList items = BList();
+		BList updateItems = BList();
+	
+		cs = GetCloudController(runningCloud);
+	
+		int backoff = cs->LongPollForChanges(items);
+
+		for(int i=0; i < items.CountItems(); i++)
+		{
+			if (fileSystem->TestLocation((BMessage*)items.ItemAtFast(i)))
+				updateItems.AddItem(items.ItemAtFast(i));
+		}
+		char itemstoupdate[40];
+		sprintf(itemstoupdate, "%d remote items to update\n", updateItems.CountItems());
+    	LogInfo(itemstoupdate);
+		PullMissing(updateItems);
+
+		for(int i=0; i < items.CountItems(); i++)
+		{
+			delete (BMessage*)items.ItemAtFast(i);
+		}
+		//update the lastLocalSync time
+		gSettings.Lock();
+		gSettings.lastLocalSync = time(NULL);
+		gSettings.SaveSettings();
+		gSettings.Unlock();
+		delete cs;
+		sleep(backoff);
+}
+
+
+bool Manager::PullMissing(BList & items)
+{
+	bool result = true;
+	BPath userpath;
+	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
+	{
+		userpath.Append(CloudPaths[runningCloud]);
+		if (items.CountItems() > 0) 
+		for(int i=0; i < items.CountItems(); i++)
+		{	
+			BMessage * item = (BMessage*)items.ItemAtFast(i);
+			BEntry fsentry;
+			BString entryPath = item->GetString("path_display");
+			BString entryType = item->GetString(".tag");
+			BString fullPath = BString(userpath.Path());
+			fullPath.Append(entryPath);
+			fsentry = BEntry(fullPath.String());
+			LocalFilesystem::AddToIgnoreList(fullPath.String());			
+			if (entryType=="file") 
+			{
+				//TODO: ewww
+				time_t sModified = DropboxSupport::ConvertTimestampToSystem(item->GetString("client_modified"));
+				QueueDownload(runningCloud, entryPath.String(), fullPath.String(), sModified);
+			}
+			else
+			{
+				//start watching folder immediately
+				LocalFilesystem::WatchEntry(&fsentry, WATCH_FLAGS);
+				LocalFilesystem::RemoveFromIgnoreList(fullPath.String());	
+			}
+		}
+	}
+	return result;	
+}
+
+
 
 int Manager::ManagerThread_static(void *manager)
 {
@@ -55,7 +175,7 @@ void Manager::TryWakeUploadManager()
 {
 	thread_info info;
 	//wake up manager if it's asleep
-	if (get_thread_info(uploadManagerThread, &info) == B_OK && info.state == B_THREAD_RECEIVING)
+	if (get_thread_info(uploadManagerThread, &info) == B_OK && (info.state == B_THREAD_RECEIVING || B_THREAD_WAITING))
 	{
 		send_data(uploadManagerThread, START_THREAD, NULL, 0);		
 	}
@@ -134,9 +254,9 @@ int Manager::ManagerThread_func()
 	{
 		// in terms of priority
 		//DELETE -- shouldn't impact other instructions
-		//MOVE -- shouldn't impact other instructions
 		//CREATE, UPLOAD -- we need to create folders before we can upload to them
 		//DOWNLOAD_FOLDER, DOWNLOAD -- downloaded folders may contain paths that we later download to
+		//MOVE -- needs to happen AFTER UPLOAD
 		
 		//we were triggered by something, sleep to see if there have been additional changes before we activate
 		//this is just to help facilitate batching, shouldn't matter if we don't get full batches
@@ -155,10 +275,7 @@ int Manager::ManagerThread_func()
 		
 		thread_id createThread = spawn_thread(CreateWorkerThread_static, "batch create", B_LOW_PRIORITY, (void *)this);
 		resume_thread(createThread);
-		
-		thread_id moveThread = spawn_thread(MoveWorkerThread_static, "batch move", B_LOW_PRIORITY, (void *)this);
-		resume_thread(moveThread);
-		
+			
 		//spin up some download workers
 		for (int i=0; i < maxThreads; i++)
 		{
@@ -172,6 +289,10 @@ int Manager::ManagerThread_func()
 			uploadManagerThread = spawn_thread(UploadThread_static, "batch upload", B_LOW_PRIORITY, (void *)this);
 			resume_thread(uploadManagerThread);
 		}
+		
+		thread_id moveThread = spawn_thread(MoveWorkerThread_static, "batch move", B_LOW_PRIORITY, (void *)this);
+		resume_thread(moveThread);
+
 
 		//check if we have any new activities added after doing all this stuff
 		if (ActivityTotal() == 0) {
@@ -183,12 +304,12 @@ int Manager::ManagerThread_func()
 }
 
 
-CloudSupport * Manager::GetCloudController(Manager::SupportedClouds cloud)
+CloudSupport * Manager::GetCloudController(SupportedClouds cloud)
 {
 	CloudSupport * cs;
 	switch (cloud) 
 	{
-		case DROPBOX:
+		case CLOUD_DROPBOX:
 			cs = new DropboxSupport();
 			break;
 		default:
@@ -499,4 +620,54 @@ void Manager::QueueMove(SupportedClouds cloud, const char * from, const char * t
 {
 	Activity * activity = new Activity(cloud, MOVE, from, to, 0, 0);
 	QueueActivity(&activity, MOVE);
+}
+
+int Manager::DBCheckerThread_static(void *manager)
+{
+	return ((Manager *)manager)->DBCheckerThread_func();
+}
+
+int Manager::DBCheckerThread_func()
+{
+	while (globalApp->IsRunning())
+	{
+		PerformPolledUpdate();
+	}
+	return B_OK;
+}
+
+void Manager::StartCloud()
+{
+	fileSystem->CheckOrCreateRootFolder();
+	if (gSettings.authKey == NULL || gSettings.authVerifier == NULL) {
+		LogInfo("Please configure Dropbox\n");
+		SendNotification("Error", "Please configure Dropbox", true);
+
+	}
+	else {
+		LogInfo("DropBox configured, performing sync check\n");
+		PerformFullUpdate(false);
+
+		LogInfo("Polling for updates\n");
+		// run updater in thread
+		DBCheckerThread = spawn_thread(DBCheckerThread_static, "Check for remote Dropbox updates", B_LOW_PRIORITY, (void*)this);
+		if ((DBCheckerThread) < B_OK) {
+			LogInfoLine("Failed to start Dropbox Checker Thread");	
+		} else {
+			resume_thread(DBCheckerThread);	
+		}
+		fileSystem->WatchDirectories();	
+		SendNotification(" Ready", "Watching for updates", false);
+	}
+}
+
+void Manager::StopCloud()
+{
+	exit_thread(DBCheckerThread);
+}
+
+
+void Manager::HandleNodeEvent(BMessage *msg)
+{
+	fileSystem->HandleNodeEvent(msg);
 }

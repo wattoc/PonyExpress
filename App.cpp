@@ -1,6 +1,5 @@
 #include "App.h"
 
-
 #include <NodeMonitor.h>
 #include <Notification.h>
 
@@ -9,7 +8,6 @@
 #include "Globals.h"
 #include "HttpRequest.h"
 #include "MainWindow.h"
-#include "LocalFilesystem.h"
 
 volatile bool App::isRunning = false; 
 
@@ -22,62 +20,18 @@ App::App(void)
 	mainwin->Show();
 	SetLogRecipient(mainwin);
 	LogInfo("App started\n");
-	cloudManager = new Manager(Manager::DROPBOX, gSettings.maxThreads);
-	fileSystem = new LocalFilesystem(Manager::DROPBOX);
-	StartDropbox();
+	cloudManager = new Manager(CLOUD_DROPBOX, gSettings.maxThreads);
+	isRunning = true;
+	cloudManager->StartCloud();
 }
 
 App::~App()
 {
 	delete cloudManager;
-	delete fileSystem;
 	HttpRequest::GlobalCleanup();
 }
 
-int App::DBCheckerThread_static(void *app)
-{
-	return ((App *)app)->DBCheckerThread_func();
-}
 
-int App::DBCheckerThread_func()
-{
-	CloudSupport * db = new DropboxSupport();
-	while (isRunning)
-	{
-		db->PerformPolledUpdate();
-	}
-	delete db;
-	return B_OK;
-}
-
-void App::StartDropbox()
-{
-	LocalFilesystem::CheckOrCreateRootFolder(DROPBOX_FOLDER);
-	if (gSettings.authKey == NULL || gSettings.authVerifier == NULL) {
-		LogInfo("Please configure Dropbox\n");
-		SendNotification("Error", "Please configure Dropbox", true);
-
-	}
-	else {
-		LogInfo("DropBox configured, performing sync check\n");
-		CloudSupport * db = new DropboxSupport();	
-		db->PerformFullUpdate(false);
-
-		LogInfo("Polling for updates\n");
-		// run updater in thread
-		isRunning = true;
-		DBCheckerThread = spawn_thread(DBCheckerThread_static, "Check for remote Dropbox updates", B_LOW_PRIORITY, (void*)this);
-		if ((DBCheckerThread) < B_OK) {
-			LogInfoLine("Failed to start Dropbox Checker Thread");	
-		} else {
-			resume_thread(DBCheckerThread);	
-		}
-		LocalFilesystem::WatchDirectories();
-		
-		SendNotification(" Ready", "Watching for updates", false);
-		delete db;
-	}
-}
 
 void App::MessageReceived(BMessage *msg)
 {
@@ -85,13 +39,12 @@ void App::MessageReceived(BMessage *msg)
 	{
 		case B_NODE_MONITOR:
 		{
-			fileSystem->HandleNodeEvent(msg);
+			cloudManager->HandleNodeEvent(msg);
 			break;	
 		}
 		case B_QUIT_REQUESTED:
 		{
 			isRunning = false;
-			exit_thread(DBCheckerThread);
 			break;	
 		}
 		default:

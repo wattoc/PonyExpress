@@ -7,18 +7,17 @@
 #include <stdio.h>
 
 #include "CloudSupport.h"
+#include "LocalFilesystem.h"
 
 class Manager
 {
 	public:
-		enum SupportedClouds {
-			DROPBOX = 1	
-		};
-
 		Manager(SupportedClouds cloud, int maxWorkerThreads);
 		~Manager(void);
 
-
+		void PerformFullUpdate(bool forceFull);
+		void PerformPolledUpdate(void);
+		bool PullMissing(BList & items);
 	
 		void QueueUpload(SupportedClouds cloud, const char * file, const char * destfullpath, time_t modified, off_t size);
 		void QueueDownload(SupportedClouds cloud, const char * file, const char * destfullpath, time_t modified);
@@ -27,6 +26,10 @@ class Manager
 		void QueueDelete(SupportedClouds cloud, const char * path);
 		void QueueMove(SupportedClouds cloud, const char * from, const char * to);
 
+		void StartCloud(void);
+		void StopCloud(void);	
+		void HandleNodeEvent(BMessage *msg);
+		
 		enum SupportedActivities {
 			UPLOAD = 0,
 			DOWNLOAD,
@@ -61,6 +64,7 @@ class Manager
 		
 	private:
 		
+		LocalFilesystem * fileSystem;
 		SupportedClouds runningCloud;
 	
 		static BObjectList<Activity> * queuedActivities;
@@ -87,6 +91,11 @@ class Manager
 		//manager thread
 		static int ManagerThread_static(void *manager);
 		int ManagerThread_func();
+		
+		//checker thread
+		thread_id	DBCheckerThread;
+		static int DBCheckerThread_static(void *app);
+		int DBCheckerThread_func();
 
 //bulk ops support		
 		//create thread
@@ -112,7 +121,8 @@ class Manager
 		
 		void LogUploadCommit(BString * commit);
 		
-		static CloudSupport * GetCloudController(Manager::SupportedClouds cloud);
+		static CloudSupport * GetCloudController(SupportedClouds cloud);
+
 };
 
 #endif

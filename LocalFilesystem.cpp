@@ -12,13 +12,13 @@ BList LocalFilesystem::tracked_entries = BList();
 BList LocalFilesystem::ignored_entries = BList();
 BLocker* LocalFilesystem::ignored_entries_locker  = new BLocker(true);
 
-void LocalFilesystem::CheckOrCreateRootFolder(const char * rootPath)
+void LocalFilesystem::CheckOrCreateRootFolder()
 {
 	BPath userpath;
 	BDirectory directory;
 	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
 	{
-		userpath.Append(rootPath);
+		userpath.Append(cloudRootPath);
 		directory.CreateDirectory(userpath.Path(), NULL);
 	}
 }
@@ -42,7 +42,7 @@ void LocalFilesystem::RecursiveDelete(const char *path)
 	}
 }
 
-bool LocalFilesystem::TestLocation(const char * rootPath, BMessage * dbMessage) 
+bool LocalFilesystem::TestLocation(BMessage * dbMessage) 
 {
 	BPath userpath;
 	BDirectory directory;
@@ -53,7 +53,7 @@ bool LocalFilesystem::TestLocation(const char * rootPath, BMessage * dbMessage)
 	
 	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
 	{
-		userpath.Append(rootPath);
+		userpath.Append(cloudRootPath);
 		directory.SetTo(userpath.Path());
 		entryType=dbMessage->GetString(".tag");
 		entryPath=dbMessage->GetString("path_display");
@@ -116,7 +116,7 @@ bool LocalFilesystem::TestLocation(const char * rootPath, BMessage * dbMessage)
 }
 
 //
-bool LocalFilesystem::ResolveUnreferencedLocals(const char * rootPath, const char * leaf, BList & remote, BList & local, bool forceFull) 
+bool LocalFilesystem::ResolveUnreferencedLocals(const char * leaf, BList & remote, BList & local, bool forceFull) 
 {
 	BPath userpath;
 	BDirectory directory;
@@ -124,7 +124,7 @@ bool LocalFilesystem::ResolveUnreferencedLocals(const char * rootPath, const cha
 	
 	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
 	{
-		userpath.Append(rootPath);
+		userpath.Append(cloudRootPath);
 		BString hardRoot = userpath.Path();
 		userpath.Append(leaf);
 		BString fullRoot = userpath.Path();
@@ -151,7 +151,7 @@ bool LocalFilesystem::ResolveUnreferencedLocals(const char * rootPath, const cha
 			{
 				strippedPath.RemoveFirst("/");
 				//recurse
-				ResolveUnreferencedLocals(rootPath, strippedPath.String(), remote, local, forceFull);
+				ResolveUnreferencedLocals(strippedPath.String(), remote, local, forceFull);
 			}	
 		}
 		return true;
@@ -160,13 +160,13 @@ bool LocalFilesystem::ResolveUnreferencedLocals(const char * rootPath, const cha
 	return false;
 }
 
-bool LocalFilesystem::SendMissing(Manager::SupportedClouds cloud, const char * rootpath, BList & items)
+bool LocalFilesystem::SendMissing(BList & items)
 {
 	bool result = true;
 	BPath userpath;
 	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
 	{
-		userpath.Append(rootpath);
+		userpath.Append(cloudRootPath);
 		for(int i=0; i < items.CountItems(); i++)
 		{	
 			BEntry fsentry;
@@ -282,7 +282,7 @@ void LocalFilesystem::RecursiveAddToCloud(const char *fullPath)
 		BPath userpath;
 		entry.GetPath(&userpath);
 		dbpath = BString(userpath.Path());
-		ConvertFullPathToDropboxRelativePath(dbpath);
+		ConvertFullPathToCloudRelativePath(dbpath);
 		if (entry.IsDirectory())
 		{
 			globalApp->cloudManager->QueueCreate(cloud, dbpath);
@@ -302,9 +302,9 @@ void LocalFilesystem::RecursiveAddToCloud(const char *fullPath)
 	
 }
 
-void LocalFilesystem::ConvertFullPathToDropboxRelativePath(BString &full)
+void LocalFilesystem::ConvertFullPathToCloudRelativePath(BString &full)
 {
-	BString dbpath = BString(DROPBOX_FOLDER);
+	BString dbpath = BString(cloudRootPath);
 	ApplyFullPathToRelativeBasePath(dbpath);
 	full.RemoveFirst(dbpath);
 }
@@ -322,7 +322,7 @@ void LocalFilesystem::ApplyFullPathToRelativeBasePath(BString &relative)
 void LocalFilesystem::WatchDirectories()
 {
 		LogInfo("Starting watcher\n");
-		BString path = BString(DROPBOX_FOLDER);
+		BString path = BString(cloudRootPath);
 		LocalFilesystem::ApplyFullPathToRelativeBasePath(path);
 		LocalFilesystem::RecursivelyWatchDirectory(path, WATCH_FLAGS);	
 }
@@ -424,7 +424,7 @@ void LocalFilesystem::HandleCreated(BMessage * msg)
 	new_file.GetPath(&path);
 	BString dbpath = BString(path.Path());
 	BString fullpath = BString(path.Path());
-	ConvertFullPathToDropboxRelativePath(dbpath);
+	ConvertFullPathToCloudRelativePath(dbpath);
 	
 	if (new_file.IsDirectory())
 	{
@@ -458,7 +458,7 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 	BPath path;
 	const char * name;
 	BDirectory dbdirectory;
-	BString dbpath = BString(DROPBOX_FOLDER);
+	BString dbpath = BString(cloudRootPath);
 	trackeddata * tracked_file;
 
 	ApplyFullPathToRelativeBasePath(dbpath);
@@ -489,11 +489,11 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 			to_entry.GetPath(&path);
 			BString fullpath = BString(path.Path());
 			BString topath = BString(path.Path());
-			ConvertFullPathToDropboxRelativePath(topath);
+			ConvertFullPathToCloudRelativePath(topath);
 			to_entry.GetModificationTime(&modified);
 			to_entry.GetSize(&size);
 			if (!IsInIgnoredList(fullpath)) {
-				LogInfoLine("Move into DropBox");
+				LogInfoLine("Move into Cloud");
 				if (to_entry.IsDirectory())
 				{
 					//upload contents of directory also as it's not being tracked yet
@@ -510,11 +510,11 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 			BString frompath = BString(tracked_file->path->Path());
 			to_entry.GetPath(&path);
 			BString topath = BString(path.Path());
-			ConvertFullPathToDropboxRelativePath(frompath);
-			ConvertFullPathToDropboxRelativePath(topath);
+			ConvertFullPathToCloudRelativePath(frompath);
+			ConvertFullPathToCloudRelativePath(topath);
 			StopWatchingNodeRef(&tracked_file->nref);
 			if (!IsInIgnoredList(path.Path())) {
-				LogInfoLine("Move within DropBox");
+				LogInfoLine("Move within Cloud");
 				globalApp->cloudManager->QueueMove(cloud, frompath, topath);
 				WatchEntry(&to_entry, WATCH_FLAGS);
 			}
@@ -525,7 +525,7 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 			if (tracked_file != NULL) {
 				from_entry = BEntry(tracked_file->path->Path());
 				BString frompath = BString(tracked_file->path->Path());
-				ConvertFullPathToDropboxRelativePath(frompath);
+				ConvertFullPathToCloudRelativePath(frompath);
 				if (!IsInIgnoredList(tracked_file->path->Path())) {
 					if (from_entry.IsDirectory()) 
 					{
@@ -537,7 +537,7 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 					}
 					globalApp->cloudManager->QueueDelete(cloud, frompath);
 					LogInfo(frompath);
-					LogInfoLine(" Remove from DropBox");
+					LogInfoLine(" Remove from Cloud");
 				}
 			}
 	}
@@ -565,7 +565,7 @@ void LocalFilesystem::HandleRemoved(BMessage * msg)
 		{
 			StopWatchingNodeRef(&td->nref);		
 		}
-		ConvertFullPathToDropboxRelativePath(path);			
+		ConvertFullPathToCloudRelativePath(path);			
 		globalApp->cloudManager->QueueDelete(cloud, path);
 		LogInfo(path);
 		LogInfoLine(" Entry Removed");
@@ -588,7 +588,7 @@ void LocalFilesystem::HandleChanged(BMessage * msg)
 	{
 		entry.SetTo(td->path->Path());
 		BString dbpath = BString(td->path->Path());
-		ConvertFullPathToDropboxRelativePath(dbpath);
+		ConvertFullPathToCloudRelativePath(dbpath);
 
 		entry.GetModificationTime(&modified);
 		entry.GetSize(&size);

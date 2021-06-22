@@ -9,24 +9,24 @@
 #include <NodeMonitor.h>
 #include <Path.h>
 
-#include "Manager.h"
+#include "config.h"
 
 #define WATCH_FLAGS (B_WATCH_DIRECTORY | B_WATCH_STAT | B_WATCH_NAME)
 
 class LocalFilesystem
 {
 	public:
-		LocalFilesystem(Manager::SupportedClouds usingCloud) { cloud = usingCloud; };
+		LocalFilesystem(SupportedClouds usingCloud, const char * rootPath) { cloud = usingCloud; cloudRootPath = rootPath; };
 
-		static bool TestLocation(const char * rootPath, BMessage * dbMessage);
-		static bool ResolveUnreferencedLocals(const char * rootPath, const char * leaf, BList & remote, BList & local, bool forceFull);
-		static bool SendMissing(Manager::SupportedClouds cloud, const char * rootpath, BList & items);
-		static void ApplyFullPathToRelativeBasePath(BString &relative);
-		static void ConvertFullPathToDropboxRelativePath(BString &full);
+		bool TestLocation(BMessage * dbMessage);
+		bool ResolveUnreferencedLocals(const char * leaf, BList & remote, BList & local, bool forceFull);
+		bool SendMissing(BList & items);
+		void ApplyFullPathToRelativeBasePath(BString &relative);
+		void ConvertFullPathToCloudRelativePath(BString &full);
 		static void RecursivelyWatchDirectory(const char * fullPath, uint32 flags);
 
-		static void WatchDirectories(void);
-		static void CheckOrCreateRootFolder(const char * rootPath);
+		void WatchDirectories(void);
+		void CheckOrCreateRootFolder(void);
 
 		void HandleNodeEvent(BMessage *message);
 		void HandleCreated(BMessage * message);
@@ -39,8 +39,8 @@ class LocalFilesystem
 		static void WatchEntry(BEntry *entry, uint32 flags);
 		
 	private:
-		Manager::SupportedClouds cloud;
-
+		SupportedClouds cloud;
+		const char * cloudRootPath;
 		class trackeddata {
 			public:
 				trackeddata(void) { path = new BPath(); };

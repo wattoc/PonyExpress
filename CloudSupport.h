@@ -10,11 +10,8 @@ class CloudSupport {
 		
 		virtual bool GetToken() = 0;
 		virtual bool ListFiles(const char * path, bool recurse, BList & items) = 0;
+		virtual int LongPollForChanges(BList & items) = 0;
 		virtual bool GetChanges(BList & items, bool fullupdate) = 0;
-		virtual void PerformFullUpdate(bool forceFull) = 0;
-		virtual void PerformPolledUpdate(void) = 0;
-	
-		virtual bool PullMissing(const char * rootpath, BList & items) = 0;
 		
 	//file get/put/delete
 		virtual bool Upload(const char * file, const char * destfullpath, time_t modified, off_t size, BString & commitentry) = 0;

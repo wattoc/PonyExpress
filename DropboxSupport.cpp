@@ -315,105 +315,6 @@ bool DropboxSupport::GetChanges(BList & items, bool fullupdate)
 	return true;
 }
 
-void DropboxSupport::PerformFullUpdate(bool forceFull)
-{
-		BList items = BList();
-		BList updateItems = BList();
-		BList localItems = BList();
-		GetChanges(items, forceFull);
-
-		for(int i=0; i < items.CountItems(); i++)
-		{
-			if (LocalFilesystem::TestLocation(DROPBOX_FOLDER, (BMessage*)items.ItemAtFast(i)))
-				updateItems.AddItem(items.ItemAtFast(i));
-		}
-		char itemstoupdate[40];
-		sprintf(itemstoupdate, "%d remote items to update\n", updateItems.CountItems());
-    	LogInfo(itemstoupdate);
-		LocalFilesystem::ResolveUnreferencedLocals(DROPBOX_FOLDER, "", items, localItems, forceFull);
-		sprintf(itemstoupdate, "%d local items to update\n", localItems.CountItems());
-    	LogInfo(itemstoupdate);
-		PullMissing(DROPBOX_FOLDER, updateItems);
-		LocalFilesystem::SendMissing(Manager::DROPBOX, DROPBOX_FOLDER, localItems);
-
-		for(int i=0; i < localItems.CountItems(); i++)
-		{
-			delete (BMessage*)localItems.ItemAtFast(i);
-		}
-
-		for(int i=0; i < items.CountItems(); i++)
-		{
-			delete (BMessage*)items.ItemAtFast(i);
-		}
-		//update the lastLocalSync time
-		gSettings.Lock();
-		gSettings.lastLocalSync = time(NULL);
-		gSettings.SaveSettings();
-		gSettings.Unlock();
-
-}
-
-void DropboxSupport::PerformPolledUpdate()
-{
-		BList items = BList();
-		BList updateItems = BList();
-		int backoff = LongPollForChanges(items);
-
-		for(int i=0; i < items.CountItems(); i++)
-		{
-			if (LocalFilesystem::TestLocation(DROPBOX_FOLDER, (BMessage*)items.ItemAtFast(i)))
-				updateItems.AddItem(items.ItemAtFast(i));
-		}
-		char itemstoupdate[40];
-		sprintf(itemstoupdate, "%d remote items to update\n", updateItems.CountItems());
-    	LogInfo(itemstoupdate);
-		PullMissing(DROPBOX_FOLDER, updateItems);
-
-		for(int i=0; i < items.CountItems(); i++)
-		{
-			delete (BMessage*)items.ItemAtFast(i);
-		}
-		//update the lastLocalSync time
-		gSettings.Lock();
-		gSettings.lastLocalSync = time(NULL);
-		gSettings.SaveSettings();
-		gSettings.Unlock();
-		sleep(backoff);
-}
-
-bool DropboxSupport::PullMissing(const char * rootpath, BList & items)
-{
-	bool result = true;
-	BPath userpath;
-	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
-	{
-		userpath.Append(rootpath);
-		if (items.CountItems() > 0) 
-		for(int i=0; i < items.CountItems(); i++)
-		{	
-			BMessage * item = (BMessage*)items.ItemAtFast(i);
-			BEntry fsentry;
-			BString entryPath = item->GetString("path_display");
-			BString entryType = item->GetString(".tag");
-			BString fullPath = BString(userpath.Path());
-			fullPath.Append(entryPath);
-			LocalFilesystem::AddToIgnoreList(fullPath.String());			
-			if (entryType=="file") 
-			{
-				time_t sModified = ConvertTimestampToSystem(item->GetString("client_modified"));
-				globalApp->cloudManager->QueueDownload(Manager::DROPBOX, entryPath.String(), fullPath.String(), sModified);
-			}
-			else
-			{
-				//start watching folder immediately
-				LocalFilesystem::WatchEntry(&fsentry, WATCH_FLAGS);
-				LocalFilesystem::RemoveFromIgnoreList(fullPath.String());	
-			}
-		}
-	}
-	return result;	
-}
-
 bool DropboxSupport::Upload(const char * file, const char * destfullpath, time_t modified, off_t size, BString & commitentry)
 {
 	BString response;
@@ -434,7 +335,6 @@ bool DropboxSupport::Upload(const char * file, const char * destfullpath, time_t
     bool result = true;
 	off_t remainingsize = size;
 	off_t offset = 0;
-	float progress = 0;
 	if (remainingsize - DROPBOX_UPLOAD_CHUNK > 0) {
 		headerdata.Append("\{\"close\": false }");
 	} else {
@@ -442,7 +342,7 @@ bool DropboxSupport::Upload(const char * file, const char * destfullpath, time_t
 	}
 	url.Append("2/files/upload_session/start");
 
-	while (remainingsize > 0 && result)
+	while (remainingsize >= 0 && result)
 	{
 		GetToken();
 		result &= req->UploadChunked(url.String(), headerdata.String(), file, &accessToken, DROPBOX_UPLOAD_CHUNK, offset, response);
@@ -452,8 +352,6 @@ bool DropboxSupport::Upload(const char * file, const char * destfullpath, time_t
 			if (status == B_OK)
 				sessionid = jsonContent.GetString("session_id");
 		}
-		progress = offset/(double)size;
-
 		offset += DROPBOX_UPLOAD_CHUNK;
 		remainingsize = size - offset;
 		if (remainingsize > 0)
@@ -587,8 +485,8 @@ bool DropboxSupport::MovePaths(BList & from, BList & to)
 	BMessage jsonContent;
 	BString postData = BString("");
 	BString url = BString(DROPBOX_API_URL);
-	url.Append("2/files/move_v2");
-	postData.Append("{\"entries\": \"[");
+	url.Append("2/files/move_batch_v2");
+	postData.Append("{\"entries\": [");
 	
 	for (int i=0; i< from.CountItems(); i++)
 	{
