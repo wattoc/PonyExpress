@@ -8,6 +8,9 @@
 #define KILL_THREAD 'UDIE'
 #define START_THREAD 'STRT'
 
+static const char * CloudPaths[] = {"", "Dropbox/"};
+
+
 BObjectList<Manager::Activity> * Manager::queuedActivities = new BObjectList<Manager::Activity>[END];
 
 BLocker * Manager::activityLocker = new BLocker(true);
@@ -17,6 +20,7 @@ Manager::Manager(SupportedClouds cloud, int maxWorkerThreads)
 	maxThreads = maxWorkerThreads;
 	runningCloud = cloud;
 	fileSystem = new LocalFilesystem(cloud, CloudPaths[cloud]);
+	fileSystem->Run();
 	uploadCommits = BList();
 	uploadasyncjobid = BString("");
 	uploadCommitLocker = new BLocker(true);
@@ -29,6 +33,8 @@ Manager::~Manager()
 {
 	//clean up running threads
 	send_data(managerThread, KILL_THREAD, NULL, 0);	
+	sleep(2);
+	kill_thread(managerThread);
 	delete uploadCommitLocker;
 	delete queuedUploadsLocker;
 	delete fileSystem;
@@ -136,7 +142,7 @@ bool Manager::PullMissing(BList & items)
 			BString fullPath = BString(userpath.Path());
 			fullPath.Append(entryPath);
 			fsentry = BEntry(fullPath.String());
-			LocalFilesystem::AddToIgnoreList(fullPath.String());			
+			fileSystem->AddToIgnoreList(fullPath.String());			
 			if (entryType=="file") 
 			{
 				//TODO: ewww
@@ -146,8 +152,8 @@ bool Manager::PullMissing(BList & items)
 			else
 			{
 				//start watching folder immediately
-				LocalFilesystem::WatchEntry(&fsentry, WATCH_FLAGS);
-				LocalFilesystem::RemoveFromIgnoreList(fullPath.String());	
+				fileSystem->WatchEntry(&fsentry, WATCH_FLAGS);
+				fileSystem->RemoveFromIgnoreList(fullPath.String());	
 			}
 		}
 	}
@@ -175,7 +181,7 @@ void Manager::TryWakeUploadManager()
 {
 	thread_info info;
 	//wake up manager if it's asleep
-	if (get_thread_info(uploadManagerThread, &info) == B_OK && (info.state == B_THREAD_RECEIVING || B_THREAD_WAITING))
+	if (get_thread_info(uploadManagerThread, &info) == B_OK && (info.state == B_THREAD_RECEIVING || info.state == B_THREAD_WAITING))
 	{
 		send_data(uploadManagerThread, START_THREAD, NULL, 0);		
 	}
@@ -185,8 +191,8 @@ Manager::Activity & Manager::Dequeue(SupportedActivities type)
 {
 	Activity * activity;
 	activityLocker->Lock();
-	activity = globalApp->cloudManager->queuedActivities[type].ItemAt(0);
-	globalApp->cloudManager->queuedActivities[type].RemoveItemAt(0);
+	activity = cloudManager->queuedActivities[type].ItemAt(0);
+	cloudManager->queuedActivities[type].RemoveItemAt(0);
 	activityLocker->Unlock();	
 	return *activity;
 }
@@ -449,8 +455,8 @@ int Manager::DownloadWorkerThread_func()
 			fsentry = BEntry(activity->destPath->String());
 			fsentry.SetModificationTime(activity->modifiedTime);
 			sleep(1);
-			LocalFilesystem::WatchEntry(&fsentry, WATCH_FLAGS);
-			LocalFilesystem::RemoveFromIgnoreList(activity->destPath->String());	
+			fileSystem->WatchEntry(&fsentry, WATCH_FLAGS);
+			fileSystem->RemoveFromIgnoreList(activity->destPath->String());	
 			delete activity;
 			activity = &Dequeue(DOWNLOAD);
 		}
@@ -527,7 +533,7 @@ int Manager::UploadThread_func()
 		do
 		{
 			// wait until we run out of stuff to do
-			int code = receive_data(&sender, NULL, 0);
+			receive_data(&sender, NULL, 0);
 		}
 		while (UploadTotal()>0);
 		
@@ -581,7 +587,7 @@ int Manager::UploadThread_func()
 void Manager::QueueActivity(Activity ** activity, SupportedActivities type)
 {
 	activityLocker->Lock();
-	globalApp->cloudManager->queuedActivities[type].AddItem(*activity);
+	cloudManager->queuedActivities[type].AddItem(*activity);
 	activityLocker->Unlock();
 	TrySpawnWorker();
 }
@@ -629,7 +635,7 @@ int Manager::DBCheckerThread_static(void *manager)
 
 int Manager::DBCheckerThread_func()
 {
-	while (globalApp->IsRunning())
+	while (isRunning)
 	{
 		PerformPolledUpdate();
 	}

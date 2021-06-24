@@ -15,13 +15,11 @@ This software bundles in my Dropbox App key for PonyExpress - if you fork or oth
 * Uses the Dropbox V2 API
 * Basic Haiku integration, notifications, etc.
 
-### Main Window
+### Deskbar Icon
 
-A log of activity and a couple of menu options
+![Screenshot](images/deskbar_icon.png)
 
-![Screenshot](images/main_window.png)
-
-This will be going away in future and replaced with a preferences app and improvements to the notifications.
+PonyExpress runs in the background and can be configured by clicking on the Deskbar Icon and selecting the Configure option.
 
 ### Configuration Window
 
@@ -43,7 +41,7 @@ Here you can set up your account on Dropbox
 - Handle operations against folders better (eg. currently deletes each file in a folder, then the folder which isn't optimal.)
 - Allow resuming uploads/downloads
 - Record queues on exit so pending activity can be resumed generally
-- Improve Haiku integration (preferences app or notification area?), re-add notifications
+- Improve notifications and add indications in Deskbar
 - Handle errors from Dropbox better and recover where possible
 - Handle collisions/sync issues
 - Potentially support for other cloud syncing services, should their APIs be easy enough to work with and support PKCE with OAUTH or something similar

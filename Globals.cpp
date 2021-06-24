@@ -1,15 +1,31 @@
 #include "Globals.h"
 
+#include <AboutWindow.h>
+#include <Notification.h>
 #include <Message.h>
+
+#include "HttpRequest.h"
 
 BLooper *logRecipient;
 bool recipientSet = FALSE;
-App * globalApp;
+volatile bool isRunning;
+Manager * cloudManager;
 
-void InitGlobals(App *app)
+void InitGlobals()
 {
-	globalApp = app;
 	gSettings.LoadSettings();
+	cloudManager = new Manager(CLOUD_DROPBOX, gSettings.maxThreads);
+	isRunning = true;
+	HttpRequest::GlobalInit();
+	cloudManager->StartCloud();
+}
+
+void CleanupGlobals()
+{
+	isRunning = false;
+	cloudManager->StopCloud();
+	delete cloudManager;
+	HttpRequest::GlobalCleanup();
 }
 
 void SetLogRecipient(BLooper *recipient)
@@ -33,10 +49,41 @@ void LogInfoLine(const char * info) {
 
 void SendNotification(const char * title, const char * content, bool error)
 {
-	globalApp->SendNotification(title, content, error);
+	BNotification * notification;
+	if (error) {
+		notification = new BNotification(B_ERROR_NOTIFICATION);				
+	} else {
+		notification = new BNotification(B_INFORMATION_NOTIFICATION);	
+	}
+	
+	notification->SetGroup("PonyExpress");
+	notification->SetTitle(title);
+	notification->SetContent(content);
+	notification->SetMessageID("ponyexpress_infonote");
+	notification->Send();
+	delete notification;
 }
+
 
 void SendProgressNotification(const char * title, const char * content, const char * identifier, float progress)
 {
-	globalApp->SendProgressNotification(title, content, identifier, progress);	
+	
+	BNotification * notification = new BNotification(B_PROGRESS_NOTIFICATION);	
+	
+	notification->SetGroup("PonyExpress");
+	notification->SetTitle(title);
+	notification->SetContent(content);
+	notification->SetMessageID(identifier);
+	notification->SetProgress(progress);
+	notification->Send();
+	delete notification;
+}
+
+void ShowAbout()
+{
+	BAboutWindow * aboutWindow = new BAboutWindow("PonyExpress",APP_SIGNATURE);
+	aboutWindow->AddDescription("A native Haiku cloud folder synchronisation application");
+	aboutWindow->SetVersion("0.1");	
+	aboutWindow->AddCopyright(2021, "Craig Watson");
+	aboutWindow->Show();
 }
