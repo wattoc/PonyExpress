@@ -1,5 +1,7 @@
 #include "sha-256.h"
-#include <cstdio>
+
+#include <stdio.h>
+
 
 #define CHUNK_SIZE 64
 #define TOTAL_LEN_LEN 8
@@ -116,7 +118,7 @@ static inline const uint8_t *calc_chunk(uint8_t chunk[CHUNK_SIZE], struct buffer
  *   lengths that are not multiples of eight, and it really operates on arrays of bytes.  In particular, the len
  *   parameter is a number of bytes.
  */
-void calc_sha_256(uint8_t hash[32], const void *input, size_t len)
+void SHA::calc_sha_256(uint8_t hash[32], const void *input, size_t len)
 {
 	/*
 	 * Note 1: All integers (expect indexes) are 32-bit unsigned integers and addition is calculated modulo 2^32.
@@ -218,7 +220,7 @@ void calc_sha_256(uint8_t hash[32], const void *input, size_t len)
 	}
 }
 
-void hash_to_string(char string[65], const uint8_t hash[32])
+void SHA::hash_to_string(char string[65], const uint8_t hash[32])
 {
 	size_t i;
 	for (i = 0; i < 32; i++) {

@@ -24,7 +24,7 @@ BString * DropboxSupport::GetClientAuth(const char * appkey, const char * verifi
 	char * encoded = new char[128];
 	BString base64encodeddigest;
 
-	calc_sha_256(challenge, verifier, length);
+	SHA::calc_sha_256(challenge, verifier, length);
 	ssize_t used = encode_base64(encoded, (char *)challenge, 32, 1);
 		encoded[used] = '\0';
 	base64encodeddigest = BString(encoded);
