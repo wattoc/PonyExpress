@@ -27,7 +27,7 @@ ConfigureWindow::RequestAuthCode() {
 	
 	codeVerifier = DropboxSupport::GetCodeVerifier();
 	gSettings.authVerifier = BString(codeVerifier->String());
-	authorizationCode->SetText("");	
+	authorizationCode->SetText("");
 	url = DropboxSupport::GetClientAuth(DROPBOX_APP_KEY, codeVerifier->String(), codeVerifier->Length());
 	
 	args[0] = url->String();
@@ -39,7 +39,7 @@ ConfigureWindow::RequestAuthCode() {
 }
 
 ConfigureWindow::ConfigureWindow(void)
-	:	BWindow(BRect(200,100,900,400),"Configuration",B_TITLED_WINDOW, B_NOT_V_RESIZABLE | B_NOT_ZOOMABLE | B_AUTO_UPDATE_SIZE_LIMITS)
+	:	BWindow(BRect(200,100,900,400),"Configuration",B_TITLED_WINDOW, B_NOT_V_RESIZABLE | B_NOT_ZOOMABLE | B_AUTO_UPDATE_SIZE_LIMITS | B_QUIT_ON_WINDOW_CLOSE)
 {
 	generalTab = new BView("DropBox", B_WILL_DRAW);
 	generalTab->SetViewColor(ui_color(B_PANEL_BACKGROUND_COLOR));
@@ -110,6 +110,8 @@ ConfigureWindow::QuitRequested(void)
 	gSettings.authKey=BString(authorizationCode->TextView()->Text());
 	gSettings.maxThreads=maxThreads->Position();
 	gSettings.SaveSettings();
+	BMessenger msgr = BMessenger(APP_SIGNATURE);
+	msgr.SendMessage(SETTINGS_UPDATE);
 	Hide();
 	return false;
 }

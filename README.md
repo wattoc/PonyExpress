@@ -33,7 +33,7 @@ Here you can set up your account on Dropbox
 
 - If you authorise PonyExpress, you'll be given some text to paste in.  Paste this in the Authorization Code field.
 
-- You'll need to close this window and restart PonyExpress.  It should then pick up your account and begin syncing between your Dropbox account and the /home/Dropbox folder.  This will be fixed up later.
+- Close the window and the syncing should commence.
 
 ### Stuff to do
 - The code is quite messy and generally pretty horrible
@@ -41,7 +41,7 @@ Here you can set up your account on Dropbox
 - Handle operations against folders better (eg. currently deletes each file in a folder, then the folder which isn't optimal.)
 - Allow resuming uploads/downloads
 - Record queues on exit so pending activity can be resumed generally
-- Improve notifications and add indications in Deskbar
+- Improve notifications and improve indications in Deskbar
 - Handle errors from Dropbox better and recover where possible
 - Handle collisions/sync issues
 - Potentially support for other cloud syncing services, should their APIs be easy enough to work with and support PKCE with OAUTH or something similar

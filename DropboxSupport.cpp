@@ -151,7 +151,7 @@ bool DropboxSupport::ListFiles(const char * path, bool recurse, BList & items)
 	postData.Append("\{\"path\": \"");
 	postData.Append(path);
 	postData.Append("\", \"include_deleted\": ");
-	postData.Append("true"); // may want to make this configurable later
+	postData.Append("false"); // may want to make this configurable later
 	postData.Append(", \"recursive\": ");
 	postData.Append(recurse ? "true" : "false");
 	postData.Append("}");
@@ -586,8 +586,11 @@ bool DropboxSupport::UploadBatchCheck(const char * asyncjobid, BString & jobstat
 
 time_t DropboxSupport::ConvertTimestampToSystem(const char * timestamp)
 {
-	struct tm tm;
+	time_t utctime;
+	struct tm tm{};
 	strptime(timestamp, DROPBOX_TIMESTAMP_STRING, &tm);
+	utctime = mktime(&tm);
+	localtime_r(&utctime, &tm);
 	return mktime(&tm);
 }
 
@@ -595,7 +598,7 @@ const char * DropboxSupport::ConvertSystemToTimestamp(time_t system)
 {
 	struct tm * tm;
 	char * buffer = new char[80];
-	tm = gmtime(&system);
+	tm = localtime(&system);
 	strftime(buffer, 80, DROPBOX_TIMESTAMP_STRING, tm);
 	return buffer;
 }

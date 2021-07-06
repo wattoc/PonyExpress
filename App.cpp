@@ -21,15 +21,17 @@ enum
 App::App(void)
 	:	BApplication(APP_SIGNATURE)
 {
-	
-	BDeskbar deskbar;
-	entry_ref ref;
-	be_roster->FindApp(APP_SIGNATURE, &ref);
-	
-	deskbar.AddItem(&ref);
-	
-		
 	InitGlobals();
+	image_info info;
+	entry_ref ref;
+	
+	if (our_image(info) == B_OK && get_ref_for_path(info.name, &ref) == B_OK) {
+		BPath path(&ref);
+		
+		BDeskbar deskbar;
+		if (!deskbar.IsRunning()) return;
+		deskbar.AddItem(&ref);
+	}
 }
 
 App::~App()
@@ -44,6 +46,16 @@ void App::MessageReceived(BMessage *msg)
 		case M_QUIT:
 			be_app->PostMessage(B_QUIT_REQUESTED);
 			break;
+		case M_REGISTER:
+		{
+			BMessenger messenger;
+			if (msg->FindMessenger("deskbar", &messenger) == B_OK)		
+				SetActivityRecipient(&messenger);
+			break;
+		}
+		case SETTINGS_UPDATE:
+			gSettings.LoadSettings();
+			break;
 		case B_QUIT_REQUESTED:
 		{
 			isRunning = false;
@@ -53,6 +65,11 @@ void App::MessageReceived(BMessage *msg)
 			BApplication::MessageReceived(msg);
 			break;
 	}
+}
+
+void App::ReadyToRun()
+{
+
 }
 
 int main(void)

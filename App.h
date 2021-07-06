@@ -10,6 +10,8 @@ public:
 	~App(void);
 	
 	void MessageReceived(BMessage *msg);
+	void ReadyToRun(void);
+	
 private:
 };
 

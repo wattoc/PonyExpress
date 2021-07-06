@@ -9,11 +9,12 @@
 extern "C" _EXPORT BView *instantiate_deskbar_item();
 
 #define VIEW_NAME "PonyExpress Deskbar Icon"
+#define M_REGISTER 'rgst'
 
 class DeskbarIcon : public BView
 {
 	public:
-		static DeskbarIcon * Instantiate(BMessage *msg);
+		static BArchivable * Instantiate(BMessage *msg);
 		
 		DeskbarIcon(void);
 		DeskbarIcon(BMessage *msg);
@@ -32,13 +33,20 @@ class DeskbarIcon : public BView
 		
 	private:
 		void Init(void);
-
-		BBitmap *icon;
-		entry_ref app_ref;
-		BPopUpMenu *popUp;
-		BMessenger *appMessenger;
-		int counter;
+		void ConnectToParent(void);
+		BBitmap *icon = NULL;
+		BBitmap *iconexclamation = NULL;
+		BBitmap *iconup = NULL;
+		BBitmap *icondown = NULL;
+		BBitmap *iconcloud = NULL;
 		ConfigureWindow *configureWindow = NULL;
+		BPopUpMenu *popUp;
+		int counter;
+		bool parentConnected = false;
+		bool activityError = false;
+		bool activityUp = false;
+		bool activityDown = false;
+		bool activityUpDown = false;
 };
 
 #endif

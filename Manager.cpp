@@ -54,9 +54,9 @@ void Manager::PerformFullUpdate(bool forceFull)
 		BList localItems = BList();
 		
 		cs = GetCloudController(runningCloud);
-		
+		SetActivity(M_ACTIVITY_UPDOWN);
 		cs->GetChanges(items, forceFull);
-
+		SetActivity(M_ACTIVITY_NONE);
 		for(int i=0; i < items.CountItems(); i++)
 		{
 			if (fileSystem->TestLocation((BMessage*)items.ItemAtFast(i)))
@@ -98,7 +98,6 @@ void Manager::PerformPolledUpdate()
 		BList updateItems = BList();
 	
 		cs = GetCloudController(runningCloud);
-	
 		int backoff = cs->LongPollForChanges(items);
 
 		for(int i=0; i < items.CountItems(); i++)
@@ -131,6 +130,8 @@ bool Manager::PullMissing(BList & items)
 	BPath userpath;
 	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
 	{
+		SetActivity(M_ACTIVITY_UPDOWN);
+
 		userpath.Append(CloudPaths[runningCloud]);
 		if (items.CountItems() > 0) 
 		for(int i=0; i < items.CountItems(); i++)
@@ -157,6 +158,8 @@ bool Manager::PullMissing(BList & items)
 			}
 		}
 	}
+	SetActivity(M_ACTIVITY_NONE);
+
 	return result;	
 }
 
@@ -445,6 +448,7 @@ int Manager::DownloadWorkerThread_func()
 {
 	if (queuedActivities[DOWNLOAD].CountItems()>0)
 	{
+		SetActivity(M_ACTIVITY_DOWN);
 		CloudSupport *cs;
 		cs = GetCloudController(runningCloud);
 		Activity * activity = &Dequeue(DOWNLOAD);
@@ -461,6 +465,7 @@ int Manager::DownloadWorkerThread_func()
 			activity = &Dequeue(DOWNLOAD);
 		}
 		delete cs;
+		SetActivity(M_ACTIVITY_NONE);
 	}	
 	return B_OK;		
 }
@@ -508,6 +513,8 @@ int Manager::UploadThread_func()
 	int itemcount = ActivityTotalByType(UPLOAD);
 	if (itemcount>0)
 	{
+		SetActivity(M_ACTIVITY_UP);
+
 		thread_id sender;
 		CloudSupport *cs;
 		//pull up to 1000 items (Dropbox limit) to a separate list
@@ -578,6 +585,8 @@ int Manager::UploadThread_func()
 		queuedUploadsLocker->Lock();
 		delete queuedUploads;
 		queuedUploadsLocker->Unlock();
+		SetActivity(M_ACTIVITY_NONE);
+
 		//kick off manager again as it may have new uploads to deal with it couldn't pick up while we were running
 		TrySpawnWorker();
 	}	
@@ -635,6 +644,20 @@ int Manager::DBCheckerThread_static(void *manager)
 
 int Manager::DBCheckerThread_func()
 {
+	while (isRunning && (gSettings.authKey.Length() == 0 || gSettings.authVerifier.Length() == 0))
+	{
+		SetActivity(M_ACTIVITY_ERROR);
+		//wait for setup to be completed
+		sleep(5);
+	}
+	SetActivity(M_ACTIVITY_NONE);
+	if (isRunning)
+	{
+		PerformFullUpdate(false);
+		fileSystem->WatchDirectories();	
+		SendNotification(" Ready", "Watching for updates", false);
+	}	
+	
 	while (isRunning)
 	{
 		PerformPolledUpdate();
@@ -648,22 +671,15 @@ void Manager::StartCloud()
 	if (gSettings.authKey == NULL || gSettings.authVerifier == NULL) {
 		LogInfo("Please configure Dropbox\n");
 		SendNotification("Error", "Please configure Dropbox", true);
-
+		SetActivity(M_ACTIVITY_ERROR);
 	}
-	else {
-		LogInfo("DropBox configured, performing sync check\n");
-		PerformFullUpdate(false);
-
-		LogInfo("Polling for updates\n");
-		// run updater in thread
-		DBCheckerThread = spawn_thread(DBCheckerThread_static, "Check for remote Dropbox updates", B_LOW_PRIORITY, (void*)this);
-		if ((DBCheckerThread) < B_OK) {
-			LogInfoLine("Failed to start Dropbox Checker Thread");	
-		} else {
-			resume_thread(DBCheckerThread);	
-		}
-		fileSystem->WatchDirectories();	
-		SendNotification(" Ready", "Watching for updates", false);
+	// run updater in thread
+	DBCheckerThread = spawn_thread(DBCheckerThread_static, "Check for remote Dropbox updates", B_LOW_PRIORITY, (void*)this);
+	if ((DBCheckerThread) < B_OK) {
+		SendNotification("Error", "Failed to start Remote Checker thread", true);
+		SetActivity(M_ACTIVITY_ERROR);
+	} else {
+		resume_thread(DBCheckerThread);	
 	}
 }
 

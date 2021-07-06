@@ -7,6 +7,7 @@
 #include "HttpRequest.h"
 
 BLooper *logRecipient;
+BMessenger *activityRecipient = NULL;
 bool recipientSet = FALSE;
 volatile bool isRunning;
 Manager * cloudManager;
@@ -34,6 +35,17 @@ void SetLogRecipient(BLooper *recipient)
 	recipientSet = TRUE;
 }
 
+void SetActivityRecipient(BMessenger *recipient)
+{
+	activityRecipient = recipient;
+}
+
+void SetActivity(int32 activity) 
+{
+	if (activityRecipient) {
+		activityRecipient->SendMessage(activity);
+	}
+}
 void LogInfo(const char * info) {
 	if (!recipientSet) return;
 	
@@ -87,3 +99,39 @@ void ShowAbout()
 	aboutWindow->AddCopyright(2021, "Craig Watson");
 	aboutWindow->Show();
 }
+
+BBitmap *GetIconFromResources(BResources * resources, int32 num, icon_size size)
+{
+	if (resources == NULL)
+		return NULL;
+	const uint8* data;
+	size_t nbytes = 0;
+	data = (const uint8*)resources->LoadResource(B_VECTOR_ICON_TYPE, num, &nbytes);
+
+	BBitmap * icon = new BBitmap(BRect(0,0, size-1, size-1), B_RGBA32);
+	if (icon->InitCheck() < B_OK)
+		return NULL;
+	
+	if (BIconUtils::GetVectorIcon(data, nbytes, icon) < B_OK)
+	{
+		delete icon;
+		return NULL;	
+	}			
+	return icon;
+}
+
+
+status_t our_image(image_info & image)
+{
+	team_id team = B_CURRENT_TEAM;
+	int32 cookie = 0;
+	
+	while (get_next_image_info(team, &cookie, &image) == B_OK)
+	{
+		if ((char *)our_image >= (char *)image.text
+			&& (char *)our_image <= (char *)image.text + image.text_size)
+				return B_OK;	
+	}
+	return B_ERROR;
+}
+
