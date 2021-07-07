@@ -18,7 +18,7 @@ enum {
 };
 
 void 
-ConfigureWindow::RequestAuthCode() {
+ConfigureWindow::_RequestAuthCode() {
 	entry_ref ref;
 	BString *url, *codeVerifier;
 	const char * args[] = { NULL , NULL};
@@ -27,7 +27,7 @@ ConfigureWindow::RequestAuthCode() {
 	
 	codeVerifier = DropboxSupport::GetCodeVerifier();
 	gSettings.authVerifier = BString(codeVerifier->String());
-	authorizationCode->SetText("");
+	fAuthorizationCode->SetText("");
 	url = DropboxSupport::GetClientAuth(DROPBOX_APP_KEY, codeVerifier->String(), codeVerifier->Length());
 	
 	args[0] = url->String();
@@ -41,42 +41,42 @@ ConfigureWindow::RequestAuthCode() {
 ConfigureWindow::ConfigureWindow(void)
 	:	BWindow(BRect(200,100,900,400),"Configuration",B_TITLED_WINDOW, B_NOT_V_RESIZABLE | B_NOT_ZOOMABLE | B_AUTO_UPDATE_SIZE_LIMITS | B_QUIT_ON_WINDOW_CLOSE)
 {
-	generalTab = new BView("DropBox", B_WILL_DRAW);
-	generalTab->SetViewColor(ui_color(B_PANEL_BACKGROUND_COLOR));
+	fGeneralTab = new BView("DropBox", B_WILL_DRAW);
+	fGeneralTab->SetViewColor(ui_color(B_PANEL_BACKGROUND_COLOR));
 
-	authorizationCode = new BTextControl("Authorization Code:", gSettings.authKey ,new BMessage(M_AUTH_CODE_CHANGED));
-	reqAuthorization = new BButton("reqAuthorization", "Request Code", new BMessage(M_REQ_AUTH_CODE));
-	reqAuthorization->ResizeToPreferred();
-	BLayoutItem * authTextView = authorizationCode->CreateTextViewLayoutItem();
+	fAuthorizationCode = new BTextControl("Authorization Code:", gSettings.authKey ,new BMessage(M_AUTH_CODE_CHANGED));
+	fReqAuthorization = new BButton("reqAuthorization", "Request Code", new BMessage(M_REQ_AUTH_CODE));
+	fReqAuthorization->ResizeToPreferred();
+	BLayoutItem * authTextView = fAuthorizationCode->CreateTextViewLayoutItem();
 	authTextView->SetExplicitMinSize(BSize(300,authTextView->PreferredSize().Height()));
-	maxThreadsLabel = new BStringView("maxthreadslabel","Maximum Threads:");
-	maxThreadsCountLabel = new BStringView("maxthreadscountlabel","");
-	maxThreads = new BSlider("maxThreads", NULL, new BMessage(M_MAX_THREADS_CHANGED), 1, 10, B_HORIZONTAL);
-	maxThreads->SetValue(gSettings.maxThreads);
+	fMaxThreadsLabel = new BStringView("maxthreadslabel","Maximum Threads:");
+	fMaxThreadsCountLabel = new BStringView("maxthreadscountlabel","");
+	fMaxThreads = new BSlider("maxThreads", NULL, new BMessage(M_MAX_THREADS_CHANGED), 1, 10, B_HORIZONTAL);
+	fMaxThreads->SetValue(gSettings.maxThreads);
 	char val[2];
 	sprintf(val,"%d",gSettings.maxThreads);
-	maxThreadsCountLabel->SetText(val);
+	fMaxThreadsCountLabel->SetText(val);
 
-	BLayoutBuilder::Group<>(generalTab, B_VERTICAL,0)
+	BLayoutBuilder::Group<>(fGeneralTab, B_VERTICAL,0)
 		.AddGrid(B_USE_DEFAULT_SPACING< B_USE_SMALL_SPACING)
-		.Add(authorizationCode->CreateLabelLayoutItem(), 0, 0)
+		.Add(fAuthorizationCode->CreateLabelLayoutItem(), 0, 0)
 		.Add(authTextView, 1, 0, 2)
-		.Add(reqAuthorization,1,1, 2)
-		.Add(maxThreadsLabel,0,2)
-		.Add(maxThreads,1,2)
-		.Add(maxThreadsCountLabel,2,2)
+		.Add(fReqAuthorization,1,1, 2)
+		.Add(fMaxThreadsLabel,0,2)
+		.Add(fMaxThreads,1,2)
+		.Add(fMaxThreadsCountLabel,2,2)
 		.SetInsets(B_USE_DEFAULT_SPACING)
 		.End();
 	
 	
-	tabView = new BTabView("tabview", B_WIDTH_FROM_LABEL);
-	tabView->SetBorder(B_NO_BORDER);
-	tabView->AddTab(generalTab);
-	tabView->Select(0L);
+	fTabView = new BTabView("tabview", B_WIDTH_FROM_LABEL);
+	fTabView->SetBorder(B_NO_BORDER);
+	fTabView->AddTab(fGeneralTab);
+	fTabView->Select(0L);
 	
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.AddStrut(B_USE_SMALL_SPACING)
-		.Add(tabView)
+		.Add(fTabView)
 		.End();
 	
 	CenterOnScreen();
@@ -89,12 +89,12 @@ ConfigureWindow::MessageReceived(BMessage *msg)
 	switch (msg->what)
 	{
 		case M_REQ_AUTH_CODE:
-			RequestAuthCode();
+			_RequestAuthCode();
 			break;
 		case M_MAX_THREADS_CHANGED:
 			char val[2];
-			sprintf(val,"%d",maxThreads->Value());
-			maxThreadsCountLabel->SetText(val);
+			sprintf(val,"%d",fMaxThreads->Value());
+			fMaxThreadsCountLabel->SetText(val);
 			break;
 		default:
 		{
@@ -107,8 +107,8 @@ ConfigureWindow::MessageReceived(BMessage *msg)
 bool
 ConfigureWindow::QuitRequested(void)
 {
-	gSettings.authKey=BString(authorizationCode->TextView()->Text());
-	gSettings.maxThreads=maxThreads->Position();
+	gSettings.authKey=BString(fAuthorizationCode->TextView()->Text());
+	gSettings.maxThreads=fMaxThreads->Position();
 	gSettings.SaveSettings();
 	BMessenger msgr = BMessenger(APP_SIGNATURE);
 	msgr.SendMessage(SETTINGS_UPDATE);

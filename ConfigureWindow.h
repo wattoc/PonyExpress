@@ -11,19 +11,19 @@
 class ConfigureWindow : public BWindow
 {
 public:
-					ConfigureWindow(void);
+			ConfigureWindow(void);
 			void		MessageReceived(BMessage *msg);
 			bool		QuitRequested(void);		
 private:
-			void 		RequestAuthCode(void);
+			void 		_RequestAuthCode(void);
 			
-			BTabView	*tabView;
-			BView		*generalTab;
-			BTextControl *authorizationCode;
-			BButton		*reqAuthorization;
-			BStringView *maxThreadsLabel;
-			BStringView *maxThreadsCountLabel;
-			BSlider *maxThreads;
+			BTabView	*fTabView;
+			BView		*fGeneralTab;
+			BTextControl *fAuthorizationCode;
+			BButton		*fReqAuthorization;
+			BStringView *fMaxThreadsLabel;
+			BStringView *fMaxThreadsCountLabel;
+			BSlider 	*fMaxThreads;
 									
 };
 

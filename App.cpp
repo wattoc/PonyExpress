@@ -4,6 +4,7 @@
 #include <Deskbar.h>
 #include <NodeMonitor.h>
 #include <Notification.h>
+#include <Path.h>
 #include <Roster.h>
 
 #include "config.h"
@@ -58,18 +59,13 @@ void App::MessageReceived(BMessage *msg)
 			break;
 		case B_QUIT_REQUESTED:
 		{
-			isRunning = false;
+			gIsRunning = false;
 			break;	
 		}
 		default:
 			BApplication::MessageReceived(msg);
 			break;
 	}
-}
-
-void App::ReadyToRun()
-{
-
 }
 
 int main(void)

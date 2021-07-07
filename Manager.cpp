@@ -3,6 +3,7 @@
 #include <FindDirectory.h>
 
 #include "DropboxSupport.h"
+#include "LocalFilesystem.h"
 #include "Globals.h"
 
 #define KILL_THREAD 'UDIE'
@@ -11,33 +12,33 @@
 static const char * CloudPaths[] = {"", "Dropbox/"};
 
 
-BObjectList<Manager::Activity> * Manager::queuedActivities = new BObjectList<Manager::Activity>[END];
+BObjectList<Manager::Activity> * Manager::fQueuedActivities = new BObjectList<Manager::Activity>[END];
 
-BLocker * Manager::activityLocker = new BLocker(true);
+BLocker * Manager::fActivityLocker = new BLocker(true);
 
 Manager::Manager(SupportedClouds cloud, int maxWorkerThreads)
 {
-	maxThreads = maxWorkerThreads;
-	runningCloud = cloud;
-	fileSystem = new LocalFilesystem(cloud, CloudPaths[cloud]);
-	fileSystem->Run();
-	uploadCommits = BList();
-	uploadasyncjobid = BString("");
-	uploadCommitLocker = new BLocker(true);
-	queuedUploadsLocker = new BLocker(true);
-	managerThread = spawn_thread(ManagerThread_static, "manager", B_LOW_PRIORITY, (void *)this);
-	resume_thread(managerThread);
+	fMaxThreads = maxWorkerThreads;
+	fRunningCloud = cloud;
+	fFileSystem = new LocalFilesystem(this, CloudPaths[cloud]);
+	fFileSystem->Run();
+	fUploadCommits = BList();
+	fUploadAsyncJobId = BString("");
+	fUploadCommitLocker = new BLocker(true);
+	fQueuedUploadsLocker = new BLocker(true);
+	fManagerThread = spawn_thread(ManagerThread_static, "manager", B_LOW_PRIORITY, (void *)this);
+	resume_thread(fManagerThread);
 }
 
 Manager::~Manager()
 {
 	//clean up running threads
-	send_data(managerThread, KILL_THREAD, NULL, 0);	
+	send_data(fManagerThread, KILL_THREAD, NULL, 0);	
 	sleep(2);
-	kill_thread(managerThread);
-	delete uploadCommitLocker;
-	delete queuedUploadsLocker;
-	delete fileSystem;
+	kill_thread(fManagerThread);
+	delete fUploadCommitLocker;
+	delete fQueuedUploadsLocker;
+	delete fFileSystem;
 }
 
 Manager::Activity::~Activity()
@@ -53,23 +54,23 @@ void Manager::PerformFullUpdate(bool forceFull)
 		BList updateItems = BList();
 		BList localItems = BList();
 		
-		cs = GetCloudController(runningCloud);
+		cs = _GetCloudController();
 		SetActivity(M_ACTIVITY_UPDOWN);
 		cs->GetChanges(items, forceFull);
 		SetActivity(M_ACTIVITY_NONE);
 		for(int i=0; i < items.CountItems(); i++)
 		{
-			if (fileSystem->TestLocation((BMessage*)items.ItemAtFast(i)))
+			if (fFileSystem->TestLocation((BMessage*)items.ItemAtFast(i)))
 				updateItems.AddItem(items.ItemAtFast(i));
 		}
 		char itemstoupdate[40];
 		sprintf(itemstoupdate, "%d remote items to update\n", updateItems.CountItems());
     	LogInfo(itemstoupdate);
-		fileSystem->ResolveUnreferencedLocals("", items, localItems, forceFull);
+		fFileSystem->ResolveUnreferencedLocals("", items, localItems, forceFull);
 		sprintf(itemstoupdate, "%d local items to update\n", localItems.CountItems());
     	LogInfo(itemstoupdate);
 		PullMissing(updateItems);
-		fileSystem->SendMissing(localItems);
+		fFileSystem->SendMissing(localItems);
 
 		for(int i=0; i < localItems.CountItems(); i++)
 		{
@@ -97,30 +98,38 @@ void Manager::PerformPolledUpdate()
 		BList items = BList();
 		BList updateItems = BList();
 	
-		cs = GetCloudController(runningCloud);
+		cs = _GetCloudController();
 		int backoff = cs->LongPollForChanges(items);
-
-		for(int i=0; i < items.CountItems(); i++)
-		{
-			if (fileSystem->TestLocation((BMessage*)items.ItemAtFast(i)))
-				updateItems.AddItem(items.ItemAtFast(i));
+		
+		if (backoff < 0) {
+			backoff = 30;
+			NotifyError(cs->GetLastError(), cs->GetLastErrorMessage());
 		}
-		char itemstoupdate[40];
-		sprintf(itemstoupdate, "%d remote items to update\n", updateItems.CountItems());
-    	LogInfo(itemstoupdate);
-		PullMissing(updateItems);
-
-		for(int i=0; i < items.CountItems(); i++)
+		else 
 		{
-			delete (BMessage*)items.ItemAtFast(i);
+			for(int i=0; i < items.CountItems(); i++)
+			{
+				if (fFileSystem->TestLocation((BMessage*)items.ItemAtFast(i)))
+					updateItems.AddItem(items.ItemAtFast(i));
+			}
+			char itemstoupdate[40];
+			sprintf(itemstoupdate, "%d remote items to update\n", updateItems.CountItems());
+	    	LogInfo(itemstoupdate);
+			PullMissing(updateItems);
+	
+			for(int i=0; i < items.CountItems(); i++)
+			{
+				delete (BMessage*)items.ItemAtFast(i);
+			}
+			//update the lastLocalSync time
+			gSettings.Lock();
+			gSettings.lastLocalSync = time(NULL);
+			gSettings.SaveSettings();
+			gSettings.Unlock();
 		}
-		//update the lastLocalSync time
-		gSettings.Lock();
-		gSettings.lastLocalSync = time(NULL);
-		gSettings.SaveSettings();
-		gSettings.Unlock();
 		delete cs;
 		sleep(backoff);
+		
 }
 
 
@@ -132,7 +141,7 @@ bool Manager::PullMissing(BList & items)
 	{
 		SetActivity(M_ACTIVITY_UPDOWN);
 
-		userpath.Append(CloudPaths[runningCloud]);
+		userpath.Append(CloudPaths[fRunningCloud]);
 		if (items.CountItems() > 0) 
 		for(int i=0; i < items.CountItems(); i++)
 		{	
@@ -143,18 +152,18 @@ bool Manager::PullMissing(BList & items)
 			BString fullPath = BString(userpath.Path());
 			fullPath.Append(entryPath);
 			fsentry = BEntry(fullPath.String());
-			fileSystem->AddToIgnoreList(fullPath.String());			
+			fFileSystem->AddToIgnoreList(fullPath.String());			
 			if (entryType=="file") 
 			{
 				//TODO: ewww
 				time_t sModified = DropboxSupport::ConvertTimestampToSystem(item->GetString("client_modified"));
-				QueueDownload(runningCloud, entryPath.String(), fullPath.String(), sModified);
+				QueueDownload(entryPath.String(), fullPath.String(), sModified);
 			}
 			else
 			{
 				//start watching folder immediately
-				fileSystem->WatchEntry(&fsentry, WATCH_FLAGS);
-				fileSystem->RemoveFromIgnoreList(fullPath.String());	
+				fFileSystem->WatchEntry(&fsentry, WATCH_FLAGS);
+				fFileSystem->RemoveFromIgnoreList(fullPath.String());	
 			}
 		}
 	}
@@ -174,9 +183,9 @@ void Manager::TrySpawnWorker()
 {
 	thread_info info;
 	//wake up manager if it's asleep
-	if (get_thread_info(managerThread, &info) == B_OK && info.state == B_THREAD_RECEIVING)
+	if (get_thread_info(fManagerThread, &info) == B_OK && info.state == B_THREAD_RECEIVING)
 	{
-		send_data(managerThread, START_THREAD, NULL, 0);		
+		send_data(fManagerThread, START_THREAD, NULL, 0);		
 	}
 }
 
@@ -184,68 +193,68 @@ void Manager::TryWakeUploadManager()
 {
 	thread_info info;
 	//wake up manager if it's asleep
-	if (get_thread_info(uploadManagerThread, &info) == B_OK && (info.state == B_THREAD_RECEIVING || info.state == B_THREAD_WAITING))
+	if (get_thread_info(fUploadManagerThread, &info) == B_OK && (info.state == B_THREAD_RECEIVING || info.state == B_THREAD_WAITING))
 	{
-		send_data(uploadManagerThread, START_THREAD, NULL, 0);		
+		send_data(fUploadManagerThread, START_THREAD, NULL, 0);		
 	}
 }
 
 Manager::Activity & Manager::Dequeue(SupportedActivities type)
 {
 	Activity * activity;
-	activityLocker->Lock();
-	activity = cloudManager->queuedActivities[type].ItemAt(0);
-	cloudManager->queuedActivities[type].RemoveItemAt(0);
-	activityLocker->Unlock();	
+	fActivityLocker->Lock();
+	activity = fQueuedActivities[type].ItemAt(0);
+	fQueuedActivities[type].RemoveItemAt(0);
+	fActivityLocker->Unlock();	
 	return *activity;
 }
 
 Manager::Activity & Manager::DequeueUpload()
 {
 	Activity * activity;
-	queuedUploadsLocker->Lock();
-	activity = queuedUploads->ItemAt(0);
-	queuedUploads->RemoveItemAt(0);
-	queuedUploadsLocker->Unlock();	
+	fQueuedUploadsLocker->Lock();
+	activity = fQueuedUploads->ItemAt(0);
+	fQueuedUploads->RemoveItemAt(0);
+	fQueuedUploadsLocker->Unlock();	
 	return *activity;
 }
 
 int Manager::UploadTotal()
 {
 	int count = 0;
-	queuedUploadsLocker->Lock();	
-	count = queuedUploads->CountItems();
-	queuedUploadsLocker->Unlock();	
+	fQueuedUploadsLocker->Lock();	
+	count = fQueuedUploads->CountItems();
+	fQueuedUploadsLocker->Unlock();	
 	return count;
 }
 
 int Manager::ActivityTotal()
 {
 	int count = 0;
-	activityLocker->Lock();	
+	fActivityLocker->Lock();	
 	for (int i=0; i < END; i++)
 	{
-		count += queuedActivities[i].CountItems();
+		count += fQueuedActivities[i].CountItems();
 	}
-	activityLocker->Unlock();	
+	fActivityLocker->Unlock();	
 	return count;
 }
 
 int Manager::ActivityTotalByType(SupportedActivities type)
 {
 	int count = 0;
-	activityLocker->Lock();
-	count = queuedActivities[type].CountItems();
-	activityLocker->Unlock();	
+	fActivityLocker->Lock();
+	count = fQueuedActivities[type].CountItems();
+	fActivityLocker->Unlock();	
 	return count;
 }
 
 
 void Manager::LogUploadCommit(BString * commit)
 {
-	uploadCommitLocker->Lock();
-	uploadCommits.AddItem(commit);
-	uploadCommitLocker->Unlock();
+	fUploadCommitLocker->Lock();
+	fUploadCommits.AddItem(commit);
+	fUploadCommitLocker->Unlock();
 }
 
 //Manager Thread should attempt to batch up calls
@@ -286,22 +295,28 @@ int Manager::ManagerThread_func()
 		resume_thread(createThread);
 			
 		//spin up some download workers
-		for (int i=0; i < maxThreads; i++)
+		for (int i=0; i < fMaxThreads; i++)
 		{
 			thread_id downloadThread = spawn_thread(DownloadWorkerThread_static, "download", B_LOW_PRIORITY, (void *)this);
 			resume_thread(downloadThread);
 		}
 		
 		//spin up the upload manager if we can
-		if (get_thread_info(uploadManagerThread, &info) != B_OK)
+		if (get_thread_info(fUploadManagerThread, &info) != B_OK)
 		{
-			uploadManagerThread = spawn_thread(UploadThread_static, "batch upload", B_LOW_PRIORITY, (void *)this);
-			resume_thread(uploadManagerThread);
+			fUploadManagerThread = spawn_thread(UploadThread_static, "batch upload", B_LOW_PRIORITY, (void *)this);
+			resume_thread(fUploadManagerThread);
 		}
 		
 		thread_id moveThread = spawn_thread(MoveWorkerThread_static, "batch move", B_LOW_PRIORITY, (void *)this);
 		resume_thread(moveThread);
 
+		if (fErrorCount >= MAX_ERRORS)
+		{
+			SetActivity(M_ACTIVITY_ERROR);
+			SendNotification("Processing Suspended", "Too many errors\nWaiting before trying again", false);
+			sleep(30);
+		}
 
 		//check if we have any new activities added after doing all this stuff
 		if (ActivityTotal() == 0) {
@@ -313,10 +328,10 @@ int Manager::ManagerThread_func()
 }
 
 
-CloudSupport * Manager::GetCloudController(SupportedClouds cloud)
+CloudSupport * Manager::_GetCloudController()
 {
 	CloudSupport * cs;
-	switch (cloud) 
+	switch (fRunningCloud) 
 	{
 		case CLOUD_DROPBOX:
 			cs = new DropboxSupport();
@@ -336,7 +351,7 @@ int Manager::DeleteWorkerThread_static(void *manager)
 
 int Manager::DeleteWorkerThread_func()
 {
-	if (queuedActivities[DELETE].CountItems()>0)
+	if (ActivityTotalByType(DELETE)>0)
 	{
 		CloudSupport *cs;
 		BList deletePaths = BList();
@@ -350,18 +365,27 @@ int Manager::DeleteWorkerThread_func()
 			activity = &Dequeue(DELETE);
 		}
 		
-		cs = GetCloudController(runningCloud);
-		cs->DeletePaths(deletePaths);
-		
-		//clean up
-		for (int i=0; i<deletePaths.CountItems(); i++)
+		cs = _GetCloudController();
+		if (!cs->DeletePaths(deletePaths))
 		{
-			delete (BString *)deletePaths.ItemAtFast(i);	
+			//re-add to queue
+			for (int i=0; i<deletePaths.CountItems(); i++)
+			{
+				QueueDelete(((BString *)deletePaths.ItemAtFast(i))->String());
+				delete (BString *)deletePaths.ItemAtFast(i);				
+			}
+			NotifyError(cs->GetLastError(), cs->GetLastErrorMessage());
+		} else {	
+			//clean up
+			for (int i=0; i<deletePaths.CountItems(); i++)
+			{
+				delete (BString *)deletePaths.ItemAtFast(i);	
+			}
+			fErrorCount = 0;			
 		}
-		
 		delete cs;
 	}	
-	return B_OK;	
+	return B_OK;
 }
 
 int Manager::CreateWorkerThread_static(void *manager)
@@ -371,7 +395,7 @@ int Manager::CreateWorkerThread_static(void *manager)
 
 int Manager::CreateWorkerThread_func()
 {
-	if (queuedActivities[CREATE].CountItems()>0)
+	if (ActivityTotalByType(CREATE)>0)
 	{
 		CloudSupport *cs;
 		BList createPaths = BList();
@@ -385,15 +409,25 @@ int Manager::CreateWorkerThread_func()
 			activity = &Dequeue(CREATE);
 		}
 		
-		cs = GetCloudController(runningCloud);
-		cs->CreatePaths(createPaths);
-		
-		//clean up
-		for (int i=0; i<createPaths.CountItems(); i++)
+		cs = _GetCloudController();
+		if (!cs->CreatePaths(createPaths))
 		{
-			delete (BString *)createPaths.ItemAtFast(i);	
+			//re-add to queue
+			for (int i=0; i<createPaths.CountItems(); i++)
+			{
+				QueueCreate(((BString *)createPaths.ItemAtFast(i))->String());
+				delete (BString *)createPaths.ItemAtFast(i);				
+			}
+			NotifyError(cs->GetLastError(), cs->GetLastErrorMessage());
+		} else {			
+			//clean up
+			for (int i=0; i<createPaths.CountItems(); i++)
+			{
+				delete (BString *)createPaths.ItemAtFast(i);	
+			}
+			fErrorCount = 0;
+
 		}
-		
 		delete cs;
 	}	
 	return B_OK;		
@@ -406,7 +440,7 @@ int Manager::MoveWorkerThread_static(void *manager)
 
 int Manager::MoveWorkerThread_func()
 {
-	if (queuedActivities[MOVE].CountItems()>0)
+	if (ActivityTotalByType(MOVE)>0)
 	{
 		CloudSupport *cs;
 		//TODO: yes this sucks
@@ -424,16 +458,27 @@ int Manager::MoveWorkerThread_func()
 			activity = &Dequeue(MOVE);
 		}
 		
-		cs = GetCloudController(runningCloud);
-		cs->MovePaths(fromPaths, toPaths);
-		
-		//clean up
-		for (int i=0; i<toPaths.CountItems(); i++)
+		cs = _GetCloudController();
+		if (!cs->MovePaths(fromPaths, toPaths)) 
 		{
-			delete (BString *)toPaths.ItemAtFast(i);
-			delete (BString *)fromPaths.ItemAtFast(i);
+			for (int i=0; i<toPaths.CountItems(); i++)
+			{
+				BString * from = (BString *)fromPaths.ItemAtFast(i);
+				BString * to = (BString *)toPaths.ItemAtFast(i);
+				QueueMove(from->String(), to->String());				
+				delete from;
+				delete to;
+			}
+			NotifyError(cs->GetLastError(), cs->GetLastErrorMessage());
+		} else {	
+			//clean up
+			for (int i=0; i<toPaths.CountItems(); i++)
+			{
+				delete (BString *)toPaths.ItemAtFast(i);
+				delete (BString *)fromPaths.ItemAtFast(i);
+			}
+			fErrorCount = 0;
 		}
-		
 		delete cs;
 	}	
 	return B_OK;		
@@ -446,24 +491,35 @@ int Manager::DownloadWorkerThread_static(void *manager)
 
 int Manager::DownloadWorkerThread_func()
 {
-	if (queuedActivities[DOWNLOAD].CountItems()>0)
+	if (ActivityTotalByType(DOWNLOAD)>0)
 	{
 		SetActivity(M_ACTIVITY_DOWN);
 		CloudSupport *cs;
-		cs = GetCloudController(runningCloud);
+		cs = _GetCloudController();
 		Activity * activity = &Dequeue(DOWNLOAD);
-		while (activity != NULL)
+		while (activity != NULL && fErrorCount < MAX_ERRORS)
 		{
 			BEntry fsentry;
-			cs->Download(activity->sourcePath->String(), activity->destPath->String());		
-			fsentry = BEntry(activity->destPath->String());
-			fsentry.SetModificationTime(activity->modifiedTime);
-			sleep(1);
-			fileSystem->WatchEntry(&fsentry, WATCH_FLAGS);
-			fileSystem->RemoveFromIgnoreList(activity->destPath->String());	
-			delete activity;
-			activity = &Dequeue(DOWNLOAD);
+			if (cs->Download(activity->sourcePath->String(), activity->destPath->String()))
+			{
+				fsentry = BEntry(activity->destPath->String());
+				fsentry.SetModificationTime(activity->modifiedTime);
+				sleep(1);
+				fFileSystem->WatchEntry(&fsentry, WATCH_FLAGS);
+				fFileSystem->RemoveFromIgnoreList(activity->destPath->String());	
+				delete activity;
+				activity = &Dequeue(DOWNLOAD);
+				fErrorCount = 0;
+			} else {
+				NotifyError(cs->GetLastError(), cs->GetLastErrorMessage());
+				sleep(5); //sleep a bit before retry
+			}
 		}
+		if (fErrorCount >= MAX_ERRORS)
+		{
+			//requeue failed activity
+			QueueActivity(&activity, DOWNLOAD);
+		}	
 		delete cs;
 		SetActivity(M_ACTIVITY_NONE);
 	}	
@@ -481,17 +537,30 @@ int Manager::UploadWorkerThread_func()
 	if (UploadTotal()>0)
 	{
 		CloudSupport *cs;
-		cs = GetCloudController(runningCloud);
+		cs = _GetCloudController();
 		Activity * activity = &DequeueUpload();
-		while (activity != NULL)
+		while (activity != NULL && fErrorCount < MAX_ERRORS)
 		{
 			processed = true;
 			BString * commitentry = new BString("");
-			cs->Upload(activity->sourcePath->String(), activity->destPath->String(), activity->modifiedTime, activity->fileSize, *commitentry);
-			LogUploadCommit(commitentry);
-			delete activity;
-			activity = &DequeueUpload();
-		}	
+			if (cs->Upload(activity->sourcePath->String(), activity->destPath->String(), activity->modifiedTime, activity->fileSize, *commitentry))
+			{
+				LogUploadCommit(commitentry);
+				delete activity;
+				activity = &DequeueUpload();
+				fErrorCount = 0;
+			} else {
+				NotifyError(cs->GetLastError(), cs->GetLastErrorMessage());
+				sleep(5); //sleep a bit before retry
+			}
+		}
+		if (fErrorCount >= MAX_ERRORS)
+		{
+			//requeue failed activity
+			fQueuedUploadsLocker->Lock();
+			fQueuedUploads->AddItem(&Dequeue(UPLOAD));	
+			fQueuedUploadsLocker->Unlock();
+		}		
 		delete cs;
 		if (processed) TryWakeUploadManager();
 	}	
@@ -520,17 +589,17 @@ int Manager::UploadThread_func()
 		//pull up to 1000 items (Dropbox limit) to a separate list
 		if (itemcount > 1000) itemcount = 1000;
 
-		queuedUploadsLocker->Lock();
-		queuedUploads = new BObjectList<Activity>(itemcount);
+		fQueuedUploadsLocker->Lock();
+		fQueuedUploads = new BObjectList<Activity>(itemcount);
 		for (int i=0; i< itemcount; i++)
 		{
-			queuedUploads->AddItem(&Dequeue(UPLOAD));
+			fQueuedUploads->AddItem(&Dequeue(UPLOAD));
 		}
-		queuedUploadsLocker->Unlock();
+		fQueuedUploadsLocker->Unlock();
 		
 		// create upload workers
-		thread_id * threads = new thread_id[maxThreads];	
-		for (int i=0; i< maxThreads; i++)
+		thread_id * threads = new thread_id[fMaxThreads];	
+		for (int i=0; i< fMaxThreads; i++)
 		{
 			threads[i] = spawn_thread(UploadWorkerThread_static, "upload worker", B_LOW_PRIORITY, (void *)this);
 			resume_thread(threads[i]);
@@ -542,10 +611,10 @@ int Manager::UploadThread_func()
 			// wait until we run out of stuff to do
 			receive_data(&sender, NULL, 0);
 		}
-		while (UploadTotal()>0);
+		while (UploadTotal()>0 && fErrorCount < MAX_ERRORS);
 		
 		//wait for all threads to terminate
-		for (int i=0; i< maxThreads; i++)
+		for (int i=0; i< fMaxThreads; i++)
 		{
 			while (get_thread_info(threads[i], &info) == B_OK)
 			{
@@ -554,37 +623,47 @@ int Manager::UploadThread_func()
 		}
 		
 		//dunno why but seems like we still don't get all the commits in
-		while(uploadCommits.CountItems() < itemcount)
+		while(fUploadCommits.CountItems() < itemcount && fErrorCount < MAX_ERRORS)
 		{
 			sleep(2);	
 		}
 		
-		cs = GetCloudController(runningCloud);
-		uploadCommitLocker->Lock();
+		cs = _GetCloudController();
+		fUploadCommitLocker->Lock();
 		
 		//if we've got an existing batch we need to wait for it to complete before we can
 		//complete a new one
-		while (uploadasyncjobid.Length()!=0)
+		while (fUploadAsyncJobId.Length()!=0)
 		{
 			BString jobstatus = BString("");
 			sleep(2);
-			cs->UploadBatchCheck(uploadasyncjobid, jobstatus);
+			cs->UploadBatchCheck(fUploadAsyncJobId, jobstatus);
 			if (strcmp(jobstatus.String(), "in_progress") != 0)
 			{
-				uploadasyncjobid = BString("");			
+				fUploadAsyncJobId = BString("");			
 			}
 		}
 		
-		cs->UploadBatch(uploadCommits, uploadasyncjobid);
-		for (int i=0; i<uploadCommits.CountItems(); i++)
+		cs->UploadBatch(fUploadCommits, fUploadAsyncJobId);
+		for (int i=0; i<fUploadCommits.CountItems(); i++)
 		{
-			delete (BString *)uploadCommits.ItemAtFast(i);	
+			delete (BString *)fUploadCommits.ItemAtFast(i);	
 		}
-		uploadCommits.MakeEmpty();
-		uploadCommitLocker->Unlock();
-		queuedUploadsLocker->Lock();
-		delete queuedUploads;
-		queuedUploadsLocker->Unlock();
+		fUploadCommits.MakeEmpty();
+		fUploadCommitLocker->Unlock();
+		fQueuedUploadsLocker->Lock();
+		if (fErrorCount >= MAX_ERRORS) 
+		{
+			//re-add remaining queuedUploads to ActivityQueue
+			for (int i=0; i< fQueuedUploads->CountItems(); i++)
+			{
+				fActivityLocker->Lock();
+				fQueuedActivities[UPLOAD].AddItem(fQueuedUploads->ItemAt(i));
+				fActivityLocker->Unlock();
+			}
+		}
+		delete fQueuedUploads;
+		fQueuedUploadsLocker->Unlock();
 		SetActivity(M_ACTIVITY_NONE);
 
 		//kick off manager again as it may have new uploads to deal with it couldn't pick up while we were running
@@ -595,101 +674,119 @@ int Manager::UploadThread_func()
 
 void Manager::QueueActivity(Activity ** activity, SupportedActivities type)
 {
-	activityLocker->Lock();
-	cloudManager->queuedActivities[type].AddItem(*activity);
-	activityLocker->Unlock();
+	fActivityLocker->Lock();
+	fQueuedActivities[type].AddItem(*activity);
+	fActivityLocker->Unlock();
 	TrySpawnWorker();
 }
 
-void Manager::QueueUpload(SupportedClouds cloud, const char * file, const char * destfullpath, time_t modified, off_t size)
+void Manager::QueueUpload(const char * file, const char * destfullpath, time_t modified, off_t size)
 {
-	Activity * activity = new Activity(cloud, UPLOAD, file, destfullpath, modified, size);
+	Activity * activity = new Activity(fRunningCloud, UPLOAD, file, destfullpath, modified, size);
 	QueueActivity(&activity, UPLOAD);
 }
 
-void Manager::QueueDownload(SupportedClouds cloud, const char * file, const char * destfullpath, time_t modified)
+void Manager::QueueDownload(const char * file, const char * destfullpath, time_t modified)
 {
-	Activity * activity = new Activity(cloud, DOWNLOAD, file, destfullpath, modified, 0);
+	Activity * activity = new Activity(fRunningCloud, DOWNLOAD, file, destfullpath, modified, 0);
 	QueueActivity(&activity, DOWNLOAD);
 }
 
-void Manager::QueueCreate(SupportedClouds cloud, const char * destfullpath)
+void Manager::QueueCreate(const char * destfullpath)
 {
-	Activity * activity = new Activity(cloud, CREATE, destfullpath, "", 0, 0);
+	Activity * activity = new Activity(fRunningCloud, CREATE, destfullpath, "", 0, 0);
 	QueueActivity(&activity, CREATE);
 }
 
-void Manager::QueueDownloadFolder(SupportedClouds cloud, const char * path)
+void Manager::QueueDownloadFolder(const char * path)
 {
-	Activity * activity = new Activity(cloud, DOWNLOAD_FOLDER, path, "", 0, 0);
+	Activity * activity = new Activity(fRunningCloud, DOWNLOAD_FOLDER, path, "", 0, 0);
 	QueueActivity(&activity, DOWNLOAD_FOLDER);
 }
 
-void Manager::QueueDelete(SupportedClouds cloud, const char * path)
+void Manager::QueueDelete(const char * path)
 {
-	Activity * activity = new Activity(cloud, DELETE, path, "", 0, 0);
+	Activity * activity = new Activity(fRunningCloud, DELETE, path, "", 0, 0);
 	QueueActivity(&activity, DELETE);
 }
 
-void Manager::QueueMove(SupportedClouds cloud, const char * from, const char * to)
+void Manager::QueueMove(const char * from, const char * to)
 {
-	Activity * activity = new Activity(cloud, MOVE, from, to, 0, 0);
+	Activity * activity = new Activity(fRunningCloud, MOVE, from, to, 0, 0);
 	QueueActivity(&activity, MOVE);
 }
 
-int Manager::DBCheckerThread_static(void *manager)
+int Manager::CheckerThread_static(void *manager)
 {
-	return ((Manager *)manager)->DBCheckerThread_func();
+	return ((Manager *)manager)->CheckerThread_func();
 }
 
-int Manager::DBCheckerThread_func()
+int Manager::CheckerThread_func()
 {
-	while (isRunning && (gSettings.authKey.Length() == 0 || gSettings.authVerifier.Length() == 0))
+	while (gIsRunning && (gSettings.authKey.Length() == 0 || gSettings.authVerifier.Length() == 0))
 	{
 		SetActivity(M_ACTIVITY_ERROR);
 		//wait for setup to be completed
 		sleep(5);
 	}
 	SetActivity(M_ACTIVITY_NONE);
-	if (isRunning)
+	if (gIsRunning)
 	{
 		PerformFullUpdate(false);
-		fileSystem->WatchDirectories();	
+		fFileSystem->WatchDirectories();	
 		SendNotification(" Ready", "Watching for updates", false);
 	}	
 	
-	while (isRunning)
+	while (gIsRunning)
 	{
 		PerformPolledUpdate();
+		if (fErrorCount >= MAX_ERRORS)
+		{
+			SendNotification("Remote Checker", "Too many errors, temporarily suspending polling", false);
+			SetActivity(M_ACTIVITY_ERROR);
+			sleep(30);
+		}
 	}
 	return B_OK;
 }
 
 void Manager::StartCloud()
 {
-	fileSystem->CheckOrCreateRootFolder();
+	fErrorCount = 0;
+	fFileSystem->CheckOrCreateRootFolder();
 	if (gSettings.authKey == NULL || gSettings.authVerifier == NULL) {
 		LogInfo("Please configure Dropbox\n");
 		SendNotification("Error", "Please configure Dropbox", true);
 		SetActivity(M_ACTIVITY_ERROR);
 	}
 	// run updater in thread
-	DBCheckerThread = spawn_thread(DBCheckerThread_static, "Check for remote Dropbox updates", B_LOW_PRIORITY, (void*)this);
-	if ((DBCheckerThread) < B_OK) {
+	fCheckerThread = spawn_thread(CheckerThread_static, "Check for remote Dropbox updates", B_LOW_PRIORITY, (void*)this);
+	if ((fCheckerThread) < B_OK) {
 		SendNotification("Error", "Failed to start Remote Checker thread", true);
 		SetActivity(M_ACTIVITY_ERROR);
 	} else {
-		resume_thread(DBCheckerThread);	
+		resume_thread(fCheckerThread);	
 	}
 }
 
 void Manager::StopCloud()
 {
-	exit_thread(DBCheckerThread);
+	exit_thread(fCheckerThread);
 }
 
 
 void Manager::HandleNodeEvent(BMessage *msg)
 {
-	fileSystem->HandleNodeEvent(msg);
+	fFileSystem->HandleNodeEvent(msg);
+}
+
+void Manager::NotifyError(const char * error, const char * summary)
+{
+	BString errormessage = BString("Error: ");
+	errormessage.Append(error);
+	errormessage.Append("\n");
+	errormessage.Append(summary);
+	SetActivity(M_ACTIVITY_ERROR);
+	SendNotification("Error", errormessage.String(), true);
+	fErrorCount++;
 }

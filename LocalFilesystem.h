@@ -11,13 +11,14 @@
 #include <Path.h>
 
 #include "config.h"
+#include "Manager.h"
 
 #define WATCH_FLAGS (B_WATCH_DIRECTORY | B_WATCH_STAT | B_WATCH_NAME)
 
 class LocalFilesystem : public BLooper
 {
 	public:
-		LocalFilesystem(SupportedClouds usingCloud, const char * rootPath) : BLooper() { cloud = usingCloud; cloudRootPath = rootPath; };
+		LocalFilesystem(Manager * manager, const char * rootPath) : BLooper() { fManager = manager; fCloudRootPath = rootPath; };
 
 		bool TestLocation(BMessage * dbMessage);
 		bool ResolveUnreferencedLocals(const char * leaf, BList & remote, BList & local, bool forceFull);
@@ -42,8 +43,8 @@ class LocalFilesystem : public BLooper
 		void WatchEntry(BEntry *entry, uint32 flags);
 		
 	private:
-		SupportedClouds cloud;
-		const char * cloudRootPath;
+		Manager * fManager;
+		const char * fCloudRootPath;
 		class trackeddata {
 			public:
 				trackeddata(void) { path = new BPath(); };
@@ -53,9 +54,9 @@ class LocalFilesystem : public BLooper
 		};
 
 
-		static BList tracked_entries;
-		static BList ignored_entries;
-		static BLocker * ignored_entries_locker;
+		static BList sTrackedEntries;
+		static BList sIgnoredEntries;
+		static BLocker * sIgnoredEntriesLocker;
 		void StopWatchingNodeRef(node_ref *nref);
 		static bool IsInRemoteList(const char * path, time_t localModified, BList & remote);
 		static bool IsInIgnoredList(const char *fullPath);

@@ -36,13 +36,11 @@ Here you can set up your account on Dropbox
 - Close the window and the syncing should commence.
 
 ### Stuff to do
-- The code is quite messy and generally pretty horrible
+- Some tidying and refactoring
 - Allow zipped downloads to improve speed
 - Handle operations against folders better (eg. currently deletes each file in a folder, then the folder which isn't optimal.)
 - Allow resuming uploads/downloads
 - Record queues on exit so pending activity can be resumed generally
-- Improve notifications and improve indications in Deskbar
-- Handle errors from Dropbox better and recover where possible
 - Handle collisions/sync issues
 - Potentially support for other cloud syncing services, should their APIs be easy enough to work with and support PKCE with OAUTH or something similar
 - Various bugs I haven't discovered yet

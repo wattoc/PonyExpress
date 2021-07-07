@@ -21,12 +21,12 @@ public:
 	static bool GlobalInit(void);
 	static void GlobalCleanup(void);
 private:
-	CURL *curl_handle = NULL;
-	FILE * readFileCallbackFile;
-	size_t readLimitCallbackCount;
-	size_t maxchunkSize;
-	static size_t CallMemberReadFileCallback(void * buffer, size_t sz, size_t n, void *f);
-	size_t readFileCallbackLimit(char * buffer, size_t size, size_t nitems);
+	CURL *fCurlHandle = NULL;
+	FILE * fReadFileCallbackFile;
+	size_t fReadLimitCallbackCount;
+	size_t fMaxChunkSize;
+	static size_t _CallMemberReadFileCallback(void * buffer, size_t sz, size_t n, void *f);
+	size_t _ReadFileCallbackLimit(char * buffer, size_t size, size_t nitems);
 };
 
 

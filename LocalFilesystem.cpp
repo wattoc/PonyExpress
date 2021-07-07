@@ -9,9 +9,9 @@
 #include "DropboxSupport.h"
 #include "Globals.h"
 
-BList LocalFilesystem::tracked_entries = BList();
-BList LocalFilesystem::ignored_entries = BList();
-BLocker* LocalFilesystem::ignored_entries_locker  = new BLocker(true);
+BList LocalFilesystem::sTrackedEntries = BList();
+BList LocalFilesystem::sIgnoredEntries = BList();
+BLocker* LocalFilesystem::sIgnoredEntriesLocker  = new BLocker(true);
 
 void LocalFilesystem::CheckOrCreateRootFolder()
 {
@@ -19,7 +19,7 @@ void LocalFilesystem::CheckOrCreateRootFolder()
 	BDirectory directory;
 	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
 	{
-		userpath.Append(cloudRootPath);
+		userpath.Append(fCloudRootPath);
 		directory.CreateDirectory(userpath.Path(), NULL);
 	}
 }
@@ -54,7 +54,7 @@ bool LocalFilesystem::TestLocation(BMessage * dbMessage)
 	
 	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
 	{
-		userpath.Append(cloudRootPath);
+		userpath.Append(fCloudRootPath);
 		directory.SetTo(userpath.Path());
 		entryType=dbMessage->GetString(".tag");
 		entryPath=dbMessage->GetString("path_display");
@@ -126,7 +126,7 @@ bool LocalFilesystem::ResolveUnreferencedLocals(const char * leaf, BList & remot
 	
 	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
 	{
-		userpath.Append(cloudRootPath);
+		userpath.Append(fCloudRootPath);
 		BString hardRoot = userpath.Path();
 		userpath.Append(leaf);
 		BString fullRoot = userpath.Path();
@@ -168,7 +168,7 @@ bool LocalFilesystem::SendMissing(BList & items)
 	BPath userpath;
 	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
 	{
-		userpath.Append(cloudRootPath);
+		userpath.Append(fCloudRootPath);
 		for(int i=0; i < items.CountItems(); i++)
 		{	
 			BEntry fsentry;
@@ -186,9 +186,9 @@ bool LocalFilesystem::SendMissing(BList & items)
 			fullPath.Append(entryPath);
 			
 			if (entryType=="file") {
-				cloudManager->QueueUpload(cloud, fullPath.String(), entryPath.String(), sModified, sSize);
+				fManager->QueueUpload(fullPath.String(), entryPath.String(), sModified, sSize);
 			} else if (entryType=="folder") {
-				cloudManager->QueueCreate(cloud, entryPath.String());
+				fManager->QueueCreate(entryPath.String());
 			}
 			// we don't support DIRs by Zip yet
 		}
@@ -239,7 +239,7 @@ void LocalFilesystem::WatchEntry(BEntry *entry, uint32 flags)
 		trackeddata * td = new trackeddata();
 		td->nref = nref;
 		entry->GetPath(td->path);
-		tracked_entries.AddItem(td);
+		sTrackedEntries.AddItem(td);
 	}
 	watch_node(&nref, flags, BMessenger(this));
 }
@@ -287,7 +287,7 @@ void LocalFilesystem::RecursiveAddToCloud(const char *fullPath)
 		ConvertFullPathToCloudRelativePath(dbpath);
 		if (entry.IsDirectory())
 		{
-			cloudManager->QueueCreate(cloud, dbpath);
+			fManager->QueueCreate(dbpath);
 			RecursiveAddToCloud(userpath.Path());
 		}
 		else	
@@ -297,7 +297,7 @@ void LocalFilesystem::RecursiveAddToCloud(const char *fullPath)
 			entry.GetModificationTime(&modified);
 			entry.GetSize(&size);
 			
-			cloudManager->QueueUpload(cloud, userpath.Path(), dbpath, modified, size);
+			fManager->QueueUpload(userpath.Path(), dbpath, modified, size);
 		}
 		WatchEntry(&entry, WATCH_FLAGS);	
 	}
@@ -306,7 +306,7 @@ void LocalFilesystem::RecursiveAddToCloud(const char *fullPath)
 
 void LocalFilesystem::ConvertFullPathToCloudRelativePath(BString &full)
 {
-	BString dbpath = BString(cloudRootPath);
+	BString dbpath = BString(fCloudRootPath);
 	ApplyFullPathToRelativeBasePath(dbpath);
 	full.RemoveFirst(dbpath);
 }
@@ -324,16 +324,16 @@ void LocalFilesystem::ApplyFullPathToRelativeBasePath(BString &relative)
 void LocalFilesystem::WatchDirectories()
 {
 		LogInfo("Starting watcher\n");
-		BString path = BString(cloudRootPath);
+		BString path = BString(fCloudRootPath);
 		LocalFilesystem::ApplyFullPathToRelativeBasePath(path);
 		LocalFilesystem::RecursivelyWatchDirectory(path, WATCH_FLAGS);	
 }
 
 LocalFilesystem::trackeddata * LocalFilesystem::FindTrackedEntry(node_ref find) 
 {	
-	for (int i=0; i<tracked_entries.CountItems(); i++)
+	for (int i=0; i<sTrackedEntries.CountItems(); i++)
 	{
-		trackeddata * file = (trackeddata *)tracked_entries.ItemAt(i);
+		trackeddata * file = (trackeddata *)sTrackedEntries.ItemAt(i);
 		if (find.node == file->nref.node && find.device == file->nref.device)
 			return file;
 	}
@@ -344,14 +344,14 @@ void LocalFilesystem::RemoveTrackedEntriesForPath(const char *fullPath)
 {
 	LogInfo("Removing all tracked entries for path: ");
 	LogInfoLine(fullPath);
-	for (int i=0; i<tracked_entries.CountItems(); i++)
+	for (int i=0; i<sTrackedEntries.CountItems(); i++)
 	{
-		trackeddata *file = (trackeddata *)tracked_entries.ItemAt(i);
+		trackeddata *file = (trackeddata *)sTrackedEntries.ItemAt(i);
 		BString path = BString(file->path->Path());
 		if (path.StartsWith(fullPath)) 
 		{
 			watch_node(&file->nref, B_STOP_WATCHING, BMessenger(this));
-			tracked_entries.RemoveItem(i);
+			sTrackedEntries.RemoveItem(i);
 			delete file;
 		}
 	}
@@ -360,13 +360,13 @@ void LocalFilesystem::RemoveTrackedEntriesForPath(const char *fullPath)
 void LocalFilesystem::RemoveTrackedEntry(node_ref * find) 
 {	
 	node_ref ref;
-	for (int i=0; i<tracked_entries.CountItems(); i++)
+	for (int i=0; i<sTrackedEntries.CountItems(); i++)
 	{
-		trackeddata *file = (trackeddata *)tracked_entries.ItemAt(i);
+		trackeddata *file = (trackeddata *)sTrackedEntries.ItemAt(i);
 		
 		if (find->node == file->nref.node && find->device == file->nref.device) 
 		{
-			tracked_entries.RemoveItem(i);
+			sTrackedEntries.RemoveItem(i);
 			delete file;
 		}
 	}
@@ -375,22 +375,22 @@ void LocalFilesystem::RemoveTrackedEntry(node_ref * find)
 void LocalFilesystem::AddToIgnoreList(const char * fullPath)
 {
 	BString * ignoring = new BString(fullPath);
-	ignored_entries_locker->Lock();
-	ignored_entries.AddItem(ignoring);
-	ignored_entries_locker->Unlock();
+	sIgnoredEntriesLocker->Lock();
+	sIgnoredEntries.AddItem(ignoring);
+	sIgnoredEntriesLocker->Unlock();
 }
 
 void LocalFilesystem::RemoveFromIgnoreList(const char * fullPath)
 {
-	for (int i=0; i<ignored_entries.CountItems(); i++)
+	for (int i=0; i<sIgnoredEntries.CountItems(); i++)
 	{
-		BString *ignoring = (BString *)ignored_entries.ItemAt(i);
+		BString *ignoring = (BString *)sIgnoredEntries.ItemAt(i);
 		
 		if (strcmp(ignoring->String(), fullPath) == 0) 
 		{
-			ignored_entries_locker->Lock();
-			ignored_entries.RemoveItem(i);
-			ignored_entries_locker->Unlock();
+			sIgnoredEntriesLocker->Lock();
+			sIgnoredEntries.RemoveItem(i);
+			sIgnoredEntriesLocker->Unlock();
 
 			delete ignoring;
 		}
@@ -399,9 +399,9 @@ void LocalFilesystem::RemoveFromIgnoreList(const char * fullPath)
 
 bool LocalFilesystem::IsInIgnoredList(const char *fullPath)
 {
-	for (int i=0; i<ignored_entries.CountItems(); i++)
+	for (int i=0; i<sIgnoredEntries.CountItems(); i++)
 	{
-		BString *ignoring = (BString *)ignored_entries.ItemAt(i);
+		BString *ignoring = (BString *)sIgnoredEntries.ItemAt(i);
 		
 		if (strcmp(ignoring->String(), fullPath) == 0) 
 		{
@@ -431,7 +431,7 @@ void LocalFilesystem::HandleCreated(BMessage * msg)
 	if (new_file.IsDirectory())
 	{
 		if (!IsInIgnoredList(path.Path())) {
-	 		cloudManager->QueueCreate(cloud, dbpath);
+	 		fManager->QueueCreate(dbpath);
 			LogInfoLine("Entry Folder Created");
 			//need to recursively upload folder contents
 			RecursiveAddToCloud(path.Path());
@@ -445,7 +445,7 @@ void LocalFilesystem::HandleCreated(BMessage * msg)
 		new_file.GetModificationTime(&modified);
 		new_file.GetSize(&size);
 		if (!IsInIgnoredList(path.Path())) {
-			cloudManager->QueueUpload(cloud, fullpath, dbpath, modified, size); 
+			fManager->QueueUpload(fullpath, dbpath, modified, size); 
 			LogInfoLine("Entry File Created");
 		}
 		WatchEntry(&new_file, WATCH_FLAGS);
@@ -460,7 +460,7 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 	BPath path;
 	const char * name;
 	BDirectory dbdirectory;
-	BString dbpath = BString(cloudRootPath);
+	BString dbpath = BString(fCloudRootPath);
 	trackeddata * tracked_file;
 
 	ApplyFullPathToRelativeBasePath(dbpath);
@@ -501,7 +501,7 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 					//upload contents of directory also as it's not being tracked yet
 					RecursiveAddToCloud(fullpath);
 				} else {
-					cloudManager->QueueUpload(cloud, fullpath, topath, modified, size); 					
+					fManager->QueueUpload(fullpath, topath, modified, size); 					
 				}
 				WatchEntry(&to_entry, WATCH_FLAGS);
 			}
@@ -517,7 +517,7 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 			StopWatchingNodeRef(&tracked_file->nref);
 			if (!IsInIgnoredList(path.Path())) {
 				LogInfoLine("Move within Cloud");
-				cloudManager->QueueMove(cloud, frompath, topath);
+				fManager->QueueMove(frompath, topath);
 				WatchEntry(&to_entry, WATCH_FLAGS);
 			}
 		}
@@ -537,7 +537,7 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 					{
 						StopWatchingNodeRef(&tracked_file->nref);		
 					}
-					cloudManager->QueueDelete(cloud, frompath);
+					fManager->QueueDelete(frompath);
 					LogInfo(frompath);
 					LogInfoLine(" Remove from Cloud");
 				}
@@ -568,7 +568,7 @@ void LocalFilesystem::HandleRemoved(BMessage * msg)
 			StopWatchingNodeRef(&td->nref);		
 		}
 		ConvertFullPathToCloudRelativePath(path);			
-		cloudManager->QueueDelete(cloud, path);
+		fManager->QueueDelete(path);
 		LogInfo(path);
 		LogInfoLine(" Entry Removed");
 	}
@@ -595,7 +595,7 @@ void LocalFilesystem::HandleChanged(BMessage * msg)
 		entry.GetModificationTime(&modified);
 		entry.GetSize(&size);
 		if (!IsInIgnoredList(td->path->Path())) {
-			cloudManager->QueueUpload(cloud, td->path->Path(), dbpath, modified, size); 
+			fManager->QueueUpload(td->path->Path(), dbpath, modified, size); 
 			LogInfoLine("Entry Changed");
 		}
 	}

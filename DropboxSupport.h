@@ -24,6 +24,10 @@ public:
 	
 	DropboxSupport(void) {};
 	~DropboxSupport() {};
+	
+	const char * GetLastError(void) { return fLastError.String(); }
+	const char * GetLastErrorMessage(void) { return fLastErrorSummary.String(); }
+	
 	//auth/token stuff
 	static BString * GetClientAuth(const char * appkey, const char * verifier, int length);
 	static BString * GetCodeVerifier(void);
@@ -50,9 +54,11 @@ public:
 	static const char * ConvertSystemToTimestamp(time_t system);
 	
 private:
-	static bool FillWithRandomData(const char* randomBytes, int length);
-	static BString accessToken;
-	static time_t tokenExpiry;
+	static bool _FillWithRandomData(const char* randomBytes, int length);
+	static BString sAccessToken;
+	static time_t sTokenExpiry;
+	BString fLastError = BString("");
+	BString fLastErrorSummary = BString("");
 };
 
 #endif // _H

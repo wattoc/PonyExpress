@@ -35,7 +35,7 @@ status_t our_image(image_info & image);
 
 BBitmap *GetIconFromResources(BResources * resources, int32 num, icon_size size);
 
-extern volatile bool isRunning;
-extern Manager * cloudManager;
+extern volatile bool gIsRunning;
+extern Manager * gCloudManager;
 
 #endif

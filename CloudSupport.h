@@ -8,6 +8,9 @@ class CloudSupport {
 		CloudSupport() {}
 		virtual ~CloudSupport() {}
 		
+		virtual const char * GetLastError(void) = 0;
+		virtual const char * GetLastErrorMessage(void) = 0;
+		
 		virtual bool GetToken() = 0;
 		virtual bool ListFiles(const char * path, bool recurse, BList & items) = 0;
 		virtual int LongPollForChanges(BList & items) = 0;

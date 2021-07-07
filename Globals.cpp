@@ -9,23 +9,23 @@
 BLooper *logRecipient;
 BMessenger *activityRecipient = NULL;
 bool recipientSet = FALSE;
-volatile bool isRunning;
-Manager * cloudManager;
+volatile bool gIsRunning;
+Manager * gCloudManager;
 
 void InitGlobals()
 {
 	gSettings.LoadSettings();
-	cloudManager = new Manager(CLOUD_DROPBOX, gSettings.maxThreads);
-	isRunning = true;
+	gCloudManager = new Manager(CLOUD_DROPBOX, gSettings.maxThreads);
+	gIsRunning = true;
 	HttpRequest::GlobalInit();
-	cloudManager->StartCloud();
+	gCloudManager->StartCloud();
 }
 
 void CleanupGlobals()
 {
-	isRunning = false;
-	cloudManager->StopCloud();
-	delete cloudManager;
+	gIsRunning = false;
+	gCloudManager->StopCloud();
+	delete gCloudManager;
 	HttpRequest::GlobalCleanup();
 }
 
@@ -95,7 +95,7 @@ void ShowAbout()
 {
 	BAboutWindow * aboutWindow = new BAboutWindow("PonyExpress",APP_SIGNATURE);
 	aboutWindow->AddDescription("A native Haiku cloud folder synchronisation application");
-	aboutWindow->SetVersion("0.1");	
+	aboutWindow->SetVersion("0.1.1");	
 	aboutWindow->AddCopyright(2021, "Craig Watson");
 	aboutWindow->Show();
 }

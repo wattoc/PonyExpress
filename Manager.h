@@ -1,14 +1,18 @@
 #ifndef MANAGER_H
 #define MANAGER_H
 
+#include <Message.h>
 #include <ObjectList.h>
 #include <Locker.h>
 #include <String.h>
 #include <stdio.h>
 
+#include "config.h"
 #include "CloudSupport.h"
-#include "LocalFilesystem.h"
 
+#define MAX_ERRORS 3
+
+class LocalFilesystem;
 class Manager
 {
 	public:
@@ -19,12 +23,12 @@ class Manager
 		void PerformPolledUpdate(void);
 		bool PullMissing(BList & items);
 	
-		void QueueUpload(SupportedClouds cloud, const char * file, const char * destfullpath, time_t modified, off_t size);
-		void QueueDownload(SupportedClouds cloud, const char * file, const char * destfullpath, time_t modified);
-		void QueueCreate(SupportedClouds cloud, const char * destfullpath);
-		void QueueDownloadFolder(SupportedClouds cloud, const char * path);
-		void QueueDelete(SupportedClouds cloud, const char * path);
-		void QueueMove(SupportedClouds cloud, const char * from, const char * to);
+		void QueueUpload(const char * file, const char * destfullpath, time_t modified, off_t size);
+		void QueueDownload(const char * file, const char * destfullpath, time_t modified);
+		void QueueCreate(const char * destfullpath);
+		void QueueDownloadFolder(const char * path);
+		void QueueDelete(const char * path);
+		void QueueMove(const char * from, const char * to);
 
 		void StartCloud(void);
 		void StopCloud(void);	
@@ -64,19 +68,22 @@ class Manager
 		
 	private:
 		
-		LocalFilesystem * fileSystem;
-		SupportedClouds runningCloud;
+		LocalFilesystem * fFileSystem;
+		SupportedClouds fRunningCloud;
 	
-		static BObjectList<Activity> * queuedActivities;
-		static BLocker * activityLocker;
-		int maxThreads;
-		thread_id managerThread;
-		thread_id uploadManagerThread;
-		BList uploadCommits;
-		BObjectList<Activity> * queuedUploads;
-		BLocker * queuedUploadsLocker;
-		BLocker * uploadCommitLocker;
-		BString uploadasyncjobid;
+		static BObjectList<Activity> * fQueuedActivities;
+		static BLocker * fActivityLocker;
+		int fMaxThreads;
+		int fErrorCount = 0;
+		thread_id fManagerThread;
+		thread_id fUploadManagerThread;
+		BList fUploadCommits;
+		BObjectList<Activity> * fQueuedUploads;
+		BLocker * fQueuedUploadsLocker;
+		BLocker * fUploadCommitLocker;
+		BString fUploadAsyncJobId;
+		
+		void NotifyError(const char * error, const char * summary);
 		
 		//Activity Queue management
 		static Activity & Dequeue(SupportedActivities type);
@@ -93,9 +100,9 @@ class Manager
 		int ManagerThread_func();
 		
 		//checker thread
-		thread_id	DBCheckerThread;
-		static int DBCheckerThread_static(void *app);
-		int DBCheckerThread_func();
+		thread_id	fCheckerThread;
+		static int CheckerThread_static(void *app);
+		int CheckerThread_func();
 
 //bulk ops support		
 		//create thread
@@ -121,7 +128,7 @@ class Manager
 		
 		void LogUploadCommit(BString * commit);
 		
-		static CloudSupport * GetCloudController(SupportedClouds cloud);
+		CloudSupport * _GetCloudController(void);
 
 };
 
