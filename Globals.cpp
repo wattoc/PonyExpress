@@ -6,14 +6,12 @@
 
 #include "HttpRequest.h"
 
-BLooper *logRecipient;
-BMessenger *activityRecipient = NULL;
-bool recipientSet = FALSE;
-volatile bool gIsRunning;
-Manager * gCloudManager;
+Globals gGlobals;
 
-void InitGlobals()
+void Globals::InitGlobals()
 {
+	recipientSet = false;
+	activityRecipient = NULL;
 	gSettings.LoadSettings();
 	gCloudManager = new Manager(CLOUD_DROPBOX, gSettings.maxThreads);
 	gIsRunning = true;
@@ -21,7 +19,7 @@ void InitGlobals()
 	gCloudManager->StartCloud();
 }
 
-void CleanupGlobals()
+void Globals::CleanupGlobals()
 {
 	gIsRunning = false;
 	gCloudManager->StopCloud();
@@ -29,24 +27,27 @@ void CleanupGlobals()
 	HttpRequest::GlobalCleanup();
 }
 
-void SetLogRecipient(BLooper *recipient)
+void Globals::SetLogRecipient(BLooper *recipient)
 {
 	logRecipient = recipient;
 	recipientSet = TRUE;
 }
 
-void SetActivityRecipient(BMessenger *recipient)
+void Globals::SetActivityRecipient(BMessenger &recipient)
 {
-	activityRecipient = recipient;
+	activityRecipient = new BMessenger(recipient);
 }
 
-void SetActivity(int32 activity) 
+void Globals::SetActivity(int32 activity) 
 {
-	if (activityRecipient) {
-		activityRecipient->SendMessage(activity);
+	BMessenger * rec = (BMessenger*)activityRecipient;
+	if (rec) {
+		if (rec->SendMessage(activity) != B_OK) {
+			SendNotification("Error","Can't reach Deskbar Icon", true);	
+		}
 	}
 }
-void LogInfo(const char * info) {
+void Globals::LogInfo(const char * info) {
 	if (!recipientSet) return;
 	
 	BMessage log = BMessage(M_LOG_MESSAGE);
@@ -54,12 +55,12 @@ void LogInfo(const char * info) {
 	logRecipient->PostMessage(&log);
 }
 
-void LogInfoLine(const char * info) {
+void Globals::LogInfoLine(const char * info) {
 	LogInfo(info);
 	LogInfo("\n");
 }
 
-void SendNotification(const char * title, const char * content, bool error)
+void Globals::SendNotification(const char * title, const char * content, bool error)
 {
 	BNotification * notification;
 	if (error) {
@@ -77,7 +78,7 @@ void SendNotification(const char * title, const char * content, bool error)
 }
 
 
-void SendProgressNotification(const char * title, const char * content, const char * identifier, float progress)
+void Globals::SendProgressNotification(const char * title, const char * content, const char * identifier, float progress)
 {
 	
 	BNotification * notification = new BNotification(B_PROGRESS_NOTIFICATION);	
@@ -91,7 +92,7 @@ void SendProgressNotification(const char * title, const char * content, const ch
 	delete notification;
 }
 
-void ShowAbout()
+void Globals::ShowAbout()
 {
 	BAboutWindow * aboutWindow = new BAboutWindow("PonyExpress",APP_SIGNATURE);
 	aboutWindow->AddDescription("A native Haiku cloud folder synchronisation application");
@@ -100,7 +101,7 @@ void ShowAbout()
 	aboutWindow->Show();
 }
 
-BBitmap *GetIconFromResources(BResources * resources, int32 num, icon_size size)
+BBitmap * Globals::GetIconFromResources(BResources * resources, int32 num, icon_size size)
 {
 	if (resources == NULL)
 		return NULL;

@@ -22,7 +22,7 @@ class DropboxSupport : public CloudSupport
 {
 public:
 	
-	DropboxSupport(void) {};
+	DropboxSupport(void) { fLastError = BString("") ; fLastErrorSummary = BString(""); };
 	~DropboxSupport() {};
 	
 	const char * GetLastError(void) { return fLastError.String(); }
@@ -57,8 +57,8 @@ private:
 	static bool _FillWithRandomData(const char* randomBytes, int length);
 	static BString sAccessToken;
 	static time_t sTokenExpiry;
-	BString fLastError = BString("");
-	BString fLastErrorSummary = BString("");
+	BString fLastError;
+	BString fLastErrorSummary;
 };
 
 #endif // _H

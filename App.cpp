@@ -22,13 +22,11 @@ enum
 App::App(void)
 	:	BApplication(APP_SIGNATURE)
 {
-	InitGlobals();
+	gGlobals.InitGlobals();
 	image_info info;
 	entry_ref ref;
 	
 	if (our_image(info) == B_OK && get_ref_for_path(info.name, &ref) == B_OK) {
-		BPath path(&ref);
-		
 		BDeskbar deskbar;
 		if (!deskbar.IsRunning()) return;
 		deskbar.AddItem(&ref);
@@ -37,7 +35,7 @@ App::App(void)
 
 App::~App()
 {
-	CleanupGlobals();
+	gGlobals.CleanupGlobals();
 }
 
 void App::MessageReceived(BMessage *msg)
@@ -50,8 +48,8 @@ void App::MessageReceived(BMessage *msg)
 		case M_REGISTER:
 		{
 			BMessenger messenger;
-			if (msg->FindMessenger("deskbar", &messenger) == B_OK)		
-				SetActivityRecipient(&messenger);
+			if (msg->FindMessenger("deskbar", &messenger) == B_OK)
+				gGlobals.SetActivityRecipient(messenger);
 			break;
 		}
 		case SETTINGS_UPDATE:
@@ -59,7 +57,7 @@ void App::MessageReceived(BMessage *msg)
 			break;
 		case B_QUIT_REQUESTED:
 		{
-			gIsRunning = false;
+			gGlobals.gIsRunning = false;
 			break;	
 		}
 		default:

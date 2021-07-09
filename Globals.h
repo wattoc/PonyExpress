@@ -20,22 +20,33 @@
 
 #define SETTINGS_UPDATE 'supd'
 
-void InitGlobals();
-void CleanupGlobals();
+class Globals 
+{
+public:
+	void InitGlobals();
+	void CleanupGlobals();
 
-void SetLogRecipient(BLooper *recipient);
-void SetActivityRecipient(BMessenger *recipient);
-void SetActivity(int32 activity);
-void LogInfo(const char * info);
-void LogInfoLine(const char * info);
-void SendNotification(const char * title, const char * content, bool error);
-void SendProgressNotification(const char * title, const char * content, const char * identifier, float progress);
-void ShowAbout(void);
-status_t our_image(image_info & image);
+	void SetLogRecipient(BLooper *recipient);
+	void SetActivityRecipient(BMessenger &recipient);
+	void SetActivity(int32 activity);
+	void LogInfo(const char * info);
+	void LogInfoLine(const char * info);
+	void SendNotification(const char * title, const char * content, bool error);
+	void SendProgressNotification(const char * title, const char * content, const char * identifier, float progress);
+	static void ShowAbout(void);
 
-BBitmap *GetIconFromResources(BResources * resources, int32 num, icon_size size);
+	static BBitmap *GetIconFromResources(BResources * resources, int32 num, icon_size size);
 
-extern volatile bool gIsRunning;
-extern Manager * gCloudManager;
+	volatile bool gIsRunning;
+private:	
+	Manager * gCloudManager;
+	BLooper *logRecipient;
+	bool recipientSet;
+	volatile BMessenger *activityRecipient;
+};
+
+extern Globals gGlobals;
+
+	status_t our_image(image_info & image);
 
 #endif

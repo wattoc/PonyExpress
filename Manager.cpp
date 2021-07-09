@@ -18,6 +18,7 @@ BLocker * Manager::fActivityLocker = new BLocker(true);
 
 Manager::Manager(SupportedClouds cloud, int maxWorkerThreads)
 {
+	fErrorCount = 0;
 	fMaxThreads = maxWorkerThreads;
 	fRunningCloud = cloud;
 	fFileSystem = new LocalFilesystem(this, CloudPaths[cloud]);
@@ -55,20 +56,15 @@ void Manager::PerformFullUpdate(bool forceFull)
 		BList localItems = BList();
 		
 		cs = _GetCloudController();
-		SetActivity(M_ACTIVITY_UPDOWN);
+		gGlobals.SetActivity(M_ACTIVITY_UPDOWN);
 		cs->GetChanges(items, forceFull);
-		SetActivity(M_ACTIVITY_NONE);
+		gGlobals.SetActivity(M_ACTIVITY_NONE);
 		for(int i=0; i < items.CountItems(); i++)
 		{
 			if (fFileSystem->TestLocation((BMessage*)items.ItemAtFast(i)))
 				updateItems.AddItem(items.ItemAtFast(i));
 		}
-		char itemstoupdate[40];
-		sprintf(itemstoupdate, "%d remote items to update\n", updateItems.CountItems());
-    	LogInfo(itemstoupdate);
 		fFileSystem->ResolveUnreferencedLocals("", items, localItems, forceFull);
-		sprintf(itemstoupdate, "%d local items to update\n", localItems.CountItems());
-    	LogInfo(itemstoupdate);
 		PullMissing(updateItems);
 		fFileSystem->SendMissing(localItems);
 
@@ -94,13 +90,20 @@ void Manager::PerformFullUpdate(bool forceFull)
 void Manager::PerformPolledUpdate()
 {
 		CloudSupport * cs;
-
+		int backoff = 0;
 		BList items = BList();
 		BList updateItems = BList();
-	
+		BString cursor;
 		cs = _GetCloudController();
-		int backoff = cs->LongPollForChanges(items);
-		
+		gSettings.Lock();
+		cursor = gSettings.cursor;
+		gSettings.Unlock();
+		if (cursor.Length() == 0) 
+		{
+			cs->GetChanges(items, false);
+		} else {
+			backoff = cs->LongPollForChanges(items);
+		}
 		if (backoff < 0) {
 			backoff = 30;
 			NotifyError(cs->GetLastError(), cs->GetLastErrorMessage());
@@ -112,9 +115,6 @@ void Manager::PerformPolledUpdate()
 				if (fFileSystem->TestLocation((BMessage*)items.ItemAtFast(i)))
 					updateItems.AddItem(items.ItemAtFast(i));
 			}
-			char itemstoupdate[40];
-			sprintf(itemstoupdate, "%d remote items to update\n", updateItems.CountItems());
-	    	LogInfo(itemstoupdate);
 			PullMissing(updateItems);
 	
 			for(int i=0; i < items.CountItems(); i++)
@@ -139,7 +139,7 @@ bool Manager::PullMissing(BList & items)
 	BPath userpath;
 	if (find_directory(B_USER_DIRECTORY, &userpath) == B_OK)
 	{
-		SetActivity(M_ACTIVITY_UPDOWN);
+		gGlobals.SetActivity(M_ACTIVITY_UPDOWN);
 
 		userpath.Append(CloudPaths[fRunningCloud]);
 		if (items.CountItems() > 0) 
@@ -167,14 +167,14 @@ bool Manager::PullMissing(BList & items)
 			}
 		}
 	}
-	SetActivity(M_ACTIVITY_NONE);
+	gGlobals.SetActivity(M_ACTIVITY_NONE);
 
 	return result;	
 }
 
 
 
-int Manager::ManagerThread_static(void *manager)
+status_t Manager::ManagerThread_static(void *manager)
 {
 	return ((Manager *)manager)->ManagerThread_func();
 }
@@ -293,14 +293,14 @@ int Manager::ManagerThread_func()
 		
 		thread_id createThread = spawn_thread(CreateWorkerThread_static, "batch create", B_LOW_PRIORITY, (void *)this);
 		resume_thread(createThread);
-			
+
 		//spin up some download workers
 		for (int i=0; i < fMaxThreads; i++)
 		{
 			thread_id downloadThread = spawn_thread(DownloadWorkerThread_static, "download", B_LOW_PRIORITY, (void *)this);
 			resume_thread(downloadThread);
 		}
-		
+
 		//spin up the upload manager if we can
 		if (get_thread_info(fUploadManagerThread, &info) != B_OK)
 		{
@@ -313,8 +313,8 @@ int Manager::ManagerThread_func()
 
 		if (fErrorCount >= MAX_ERRORS)
 		{
-			SetActivity(M_ACTIVITY_ERROR);
-			SendNotification("Processing Suspended", "Too many errors\nWaiting before trying again", false);
+			gGlobals.SetActivity(M_ACTIVITY_ERROR);
+			gGlobals.SendNotification("Processing Suspended", "Too many errors, waiting before trying again", false);
 			sleep(30);
 		}
 
@@ -344,7 +344,7 @@ CloudSupport * Manager::_GetCloudController()
 	return cs;
 }
 
-int Manager::DeleteWorkerThread_static(void *manager)
+status_t Manager::DeleteWorkerThread_static(void *manager)
 {
 	return ((Manager *)manager)->DeleteWorkerThread_func();	
 }
@@ -388,7 +388,7 @@ int Manager::DeleteWorkerThread_func()
 	return B_OK;
 }
 
-int Manager::CreateWorkerThread_static(void *manager)
+status_t Manager::CreateWorkerThread_static(void *manager)
 {
 	return ((Manager *)manager)->CreateWorkerThread_func();	
 }
@@ -433,7 +433,7 @@ int Manager::CreateWorkerThread_func()
 	return B_OK;		
 }
 
-int Manager::MoveWorkerThread_static(void *manager)
+status_t Manager::MoveWorkerThread_static(void *manager)
 {
 	return ((Manager *)manager)->MoveWorkerThread_func();	
 }
@@ -484,7 +484,7 @@ int Manager::MoveWorkerThread_func()
 	return B_OK;		
 }
 
-int Manager::DownloadWorkerThread_static(void *manager)
+status_t Manager::DownloadWorkerThread_static(void *manager)
 {
 	return ((Manager *)manager)->DownloadWorkerThread_func();	
 }
@@ -493,10 +493,11 @@ int Manager::DownloadWorkerThread_func()
 {
 	if (ActivityTotalByType(DOWNLOAD)>0)
 	{
-		SetActivity(M_ACTIVITY_DOWN);
 		CloudSupport *cs;
 		cs = _GetCloudController();
 		Activity * activity = &Dequeue(DOWNLOAD);
+		gGlobals.SetActivity(M_ACTIVITY_DOWN);
+
 		while (activity != NULL && fErrorCount < MAX_ERRORS)
 		{
 			BEntry fsentry;
@@ -521,12 +522,13 @@ int Manager::DownloadWorkerThread_func()
 			QueueActivity(&activity, DOWNLOAD);
 		}	
 		delete cs;
-		SetActivity(M_ACTIVITY_NONE);
-	}	
+	}
+	gGlobals.SetActivity(M_ACTIVITY_NONE);
+
 	return B_OK;		
 }
 
-int Manager::UploadWorkerThread_static(void *manager)
+status_t Manager::UploadWorkerThread_static(void *manager)
 {
 	return ((Manager *)manager)->UploadWorkerThread_func();	
 }
@@ -541,9 +543,10 @@ int Manager::UploadWorkerThread_func()
 		Activity * activity = &DequeueUpload();
 		while (activity != NULL && fErrorCount < MAX_ERRORS)
 		{
+			BEntry entry = BEntry(activity->sourcePath->String());
 			processed = true;
 			BString * commitentry = new BString("");
-			if (cs->Upload(activity->sourcePath->String(), activity->destPath->String(), activity->modifiedTime, activity->fileSize, *commitentry))
+			if (!entry.Exists() || cs->Upload(activity->sourcePath->String(), activity->destPath->String(), activity->modifiedTime, activity->fileSize, *commitentry))
 			{
 				LogUploadCommit(commitentry);
 				delete activity;
@@ -556,10 +559,13 @@ int Manager::UploadWorkerThread_func()
 		}
 		if (fErrorCount >= MAX_ERRORS)
 		{
-			//requeue failed activity
-			fQueuedUploadsLocker->Lock();
-			fQueuedUploads->AddItem(&Dequeue(UPLOAD));	
-			fQueuedUploadsLocker->Unlock();
+			//check if file exists - if so requeue failed activity
+			BEntry entry = BEntry(activity->sourcePath->String());
+			if (entry.Exists()) {
+				fQueuedUploadsLocker->Lock();
+				fQueuedUploads->AddItem(activity);	
+				fQueuedUploadsLocker->Unlock();
+			}
 		}		
 		delete cs;
 		if (processed) TryWakeUploadManager();
@@ -568,7 +574,7 @@ int Manager::UploadWorkerThread_func()
 }
 
 
-int Manager::UploadThread_static(void *manager)
+status_t Manager::UploadThread_static(void *manager)
 {
 	return ((Manager *)manager)->UploadThread_func();
 }
@@ -582,7 +588,7 @@ int Manager::UploadThread_func()
 	int itemcount = ActivityTotalByType(UPLOAD);
 	if (itemcount>0)
 	{
-		SetActivity(M_ACTIVITY_UP);
+		gGlobals.SetActivity(M_ACTIVITY_UP);
 
 		thread_id sender;
 		CloudSupport *cs;
@@ -622,12 +628,7 @@ int Manager::UploadThread_func()
 			}
 		}
 		
-		//dunno why but seems like we still don't get all the commits in
-		while(fUploadCommits.CountItems() < itemcount && fErrorCount < MAX_ERRORS)
-		{
-			sleep(2);	
-		}
-		
+
 		cs = _GetCloudController();
 		fUploadCommitLocker->Lock();
 		
@@ -664,7 +665,7 @@ int Manager::UploadThread_func()
 		}
 		delete fQueuedUploads;
 		fQueuedUploadsLocker->Unlock();
-		SetActivity(M_ACTIVITY_NONE);
+		gGlobals.SetActivity(M_ACTIVITY_NONE);
 
 		//kick off manager again as it may have new uploads to deal with it couldn't pick up while we were running
 		TrySpawnWorker();
@@ -716,35 +717,37 @@ void Manager::QueueMove(const char * from, const char * to)
 	QueueActivity(&activity, MOVE);
 }
 
-int Manager::CheckerThread_static(void *manager)
+status_t Manager::CheckerThread_static(void *manager)
 {
 	return ((Manager *)manager)->CheckerThread_func();
 }
 
 int Manager::CheckerThread_func()
 {
-	while (gIsRunning && (gSettings.authKey.Length() == 0 || gSettings.authVerifier.Length() == 0))
+	while (gGlobals.gIsRunning && (gSettings.authKey.Length() == 0 || gSettings.authVerifier.Length() == 0))
 	{
-		SetActivity(M_ACTIVITY_ERROR);
+		gGlobals.SetActivity(M_ACTIVITY_ERROR);
 		//wait for setup to be completed
 		sleep(5);
 	}
-	SetActivity(M_ACTIVITY_NONE);
-	if (gIsRunning)
+	gGlobals.SetActivity(M_ACTIVITY_NONE);
+	if (gGlobals.gIsRunning)
 	{
 		PerformFullUpdate(false);
 		fFileSystem->WatchDirectories();	
-		SendNotification(" Ready", "Watching for updates", false);
+		gGlobals.SendNotification("Ready", "Watching for updates", false);
 	}	
 	
-	while (gIsRunning)
+	while (gGlobals.gIsRunning)
 	{
 		PerformPolledUpdate();
 		if (fErrorCount >= MAX_ERRORS)
 		{
-			SendNotification("Remote Checker", "Too many errors, temporarily suspending polling", false);
-			SetActivity(M_ACTIVITY_ERROR);
+			gGlobals.SendNotification("Remote Checker", "Too many errors, temporarily suspending polling", false);
+			gGlobals.SetActivity(M_ACTIVITY_ERROR);
 			sleep(30);
+			//clear errors
+			fErrorCount = 0;
 		}
 	}
 	return B_OK;
@@ -755,15 +758,14 @@ void Manager::StartCloud()
 	fErrorCount = 0;
 	fFileSystem->CheckOrCreateRootFolder();
 	if (gSettings.authKey == NULL || gSettings.authVerifier == NULL) {
-		LogInfo("Please configure Dropbox\n");
-		SendNotification("Error", "Please configure Dropbox", true);
-		SetActivity(M_ACTIVITY_ERROR);
+		gGlobals.SendNotification("Error", "Please configure Dropbox", true);
+		gGlobals.SetActivity(M_ACTIVITY_ERROR);
 	}
 	// run updater in thread
 	fCheckerThread = spawn_thread(CheckerThread_static, "Check for remote Dropbox updates", B_LOW_PRIORITY, (void*)this);
 	if ((fCheckerThread) < B_OK) {
-		SendNotification("Error", "Failed to start Remote Checker thread", true);
-		SetActivity(M_ACTIVITY_ERROR);
+		gGlobals.SendNotification("Error", "Failed to start Remote Checker thread", true);
+		gGlobals.SetActivity(M_ACTIVITY_ERROR);
 	} else {
 		resume_thread(fCheckerThread);	
 	}
@@ -786,7 +788,7 @@ void Manager::NotifyError(const char * error, const char * summary)
 	errormessage.Append(error);
 	errormessage.Append("\n");
 	errormessage.Append(summary);
-	SetActivity(M_ACTIVITY_ERROR);
-	SendNotification("Error", errormessage.String(), true);
+	gGlobals.SetActivity(M_ACTIVITY_ERROR);
+	gGlobals.SendNotification("Error", errormessage.String(), true);
 	fErrorCount++;
 }

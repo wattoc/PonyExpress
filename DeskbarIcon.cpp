@@ -40,7 +40,7 @@ DeskbarIcon::DeskbarIcon() :
 DeskbarIcon::DeskbarIcon(BMessage *msg)	:
 				BView(msg)
 {
-	Init();	
+	Init();
 }
 
 DeskbarIcon::~DeskbarIcon()
@@ -121,7 +121,9 @@ void DeskbarIcon::Init()
 	BResources * resources;
 	BFile file;
 	image_info info;
-
+	icon = iconexclamation = iconup = icondown = iconcloud = NULL;
+	configureWindow = NULL;
+	parentConnected = activityError = activityUp = activityDown = activityUpDown = false;
 	if (our_image(info) != B_OK)
 		return;
 
@@ -134,11 +136,11 @@ void DeskbarIcon::Init()
 	if (resources->InitCheck() < B_OK) 
 		return;
 	
-	icon = GetIconFromResources(resources, 0, B_MINI_ICON);
-	iconexclamation = GetIconFromResources(resources, 1, B_MINI_ICON);
-	iconup = GetIconFromResources(resources, 2, B_MINI_ICON);
-	icondown = GetIconFromResources(resources, 3, B_MINI_ICON);
-	iconcloud = GetIconFromResources(resources, 4, B_MINI_ICON);
+	icon = gGlobals.GetIconFromResources(resources, 0, B_MINI_ICON);
+	iconexclamation = gGlobals.GetIconFromResources(resources, 1, B_MINI_ICON);
+	iconup = gGlobals.GetIconFromResources(resources, 2, B_MINI_ICON);
+	icondown = gGlobals.GetIconFromResources(resources, 3, B_MINI_ICON);
+	iconcloud = gGlobals.GetIconFromResources(resources, 4, B_MINI_ICON);
 
 	delete resources;
 	popUp = NULL;
@@ -153,9 +155,9 @@ void DeskbarIcon::Pulse()
 
 void DeskbarIcon::ConnectToParent()
 {
-	BMessage registration = BMessage(M_REGISTER);
 	BMessenger msgr = BMessenger(APP_SIGNATURE);
-	registration.AddMessenger("deskbar",BMessenger(this));
+	BMessage registration = BMessage(M_REGISTER);
+	registration.AddMessenger("deskbar", BMessenger(this));
 	msgr.SendMessage(&registration, this, 0);
 }
 
@@ -202,7 +204,7 @@ void DeskbarIcon::MessageReceived(BMessage *msg)
 			break;
 		}	
 		case M_ABOUT:
-			ShowAbout();
+			gGlobals.ShowAbout();
 			break;
 		case M_QUIT:
 			{
@@ -220,5 +222,5 @@ void DeskbarIcon::MessageReceived(BMessage *msg)
 		default:
 			BView::MessageReceived(msg);
 			break;
-	}	
+	}
 }

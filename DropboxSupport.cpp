@@ -1,12 +1,12 @@
 #include "DropboxSupport.h"
 
-#include <FindDirectory.h>
 #include <Directory.h>
-#include <Path.h>
-
-#include <mail_encoding.h>
-#include <String.h>
+#include <FindDirectory.h>
 #include <private/shared/Json.h>
+#include <mail_encoding.h>
+#include <Path.h>
+#include <String.h>
+#include <time.h>
 
 #include "config.h"
 #include "Globals.h"
@@ -246,7 +246,7 @@ int DropboxSupport::LongPollForChanges(BList & items)
 		if (status == B_OK) {
 			BMessage error;
 			bool changes = jsonContent.GetBool("changes", false);
-			backoff = jsonContent.GetDouble("backoff", 0);
+			backoff = (int)jsonContent.GetDouble("backoff", 0);
 			if (jsonContent.FindMessage("error", 0, &error) == B_OK)
 			{
 				fLastError = jsonContent.GetString(".tag");
@@ -359,11 +359,8 @@ bool DropboxSupport::GetChanges(BList & items, bool fullupdate)
 	gSettings.Unlock();
 	
 	if (cursorLength == 0 || fullupdate) {
-		LogInfo("No cursor available, performing full sync\n");
+		gGlobals.SendNotification("Dropbox","No cursor available, performing full sync", false);
 		return ListFiles("", true, items);
-	}
-	else {
-		LogInfo("Cursor found, updating on poll\n");	
 	}
 		
 	return true;
@@ -415,7 +412,8 @@ bool DropboxSupport::Upload(const char * file, const char * destfullpath, time_t
 			} else {
 				fLastError = BString("API");
 				fLastErrorSummary = response.String();
-				result = false;
+				delete req;
+				return false;
 			}
 			if (sessionid.Length() == 0)
 			{
@@ -446,14 +444,15 @@ bool DropboxSupport::Upload(const char * file, const char * destfullpath, time_t
 			result = false;	
 		}
 	}
-	
-	commitentry.Append("\{\"cursor\": \{\"session_id\": \"");		
-	commitentry.Append(sessionid);
-	commitentry.Append("\", \"offset\": ");
-	commitentry << size;
-	commitentry.Append(" }, \"commit\": ");
-	commitentry.Append(commitdata);
-	commitentry.Append("}");
+	if (result) {
+		commitentry.Append("\{\"cursor\": \{\"session_id\": \"");		
+		commitentry.Append(sessionid);
+		commitentry.Append("\", \"offset\": ");
+		commitentry << size;
+		commitentry.Append(" }, \"commit\": ");
+		commitentry.Append(commitdata);
+		commitentry.Append("}");
+	}
 	delete req;
 	return result;
 
@@ -737,7 +736,7 @@ bool DropboxSupport::UploadBatchCheck(const char * asyncjobid, BString & jobstat
 time_t DropboxSupport::ConvertTimestampToSystem(const char * timestamp)
 {
 	time_t utctime;
-	struct tm tm{};
+	struct tm tm;
 	strptime(timestamp, DROPBOX_TIMESTAMP_STRING, &tm);
 	utctime = mktime(&tm);
 	localtime_r(&utctime, &tm);

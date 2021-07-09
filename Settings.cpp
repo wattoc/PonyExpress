@@ -12,6 +12,7 @@ Settings gSettings;
 
 Settings::Settings(void)
 {
+	maxThreads = 10;
 	LoadSettings();	
 }
 

@@ -86,7 +86,9 @@ LIBPATHS =
 SYSTEM_INCLUDE_PATHS =  /boot/system/develop/headers/be \
  /boot/system/develop/headers/cpp \
  /boot/system/develop/headers/posix \
- /boot/system/develop/headers/private/interface 
+ /boot/system/develop/headers/private/interface \
+ /boot/system/develop/headers/private/shared \
+ /boot/system/develop/headers/curl 
 
 #	Additional paths paths to look for local headers. These use the form
 #	#include "header". Directories that contain the files in SRCS are

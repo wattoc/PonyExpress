@@ -15,7 +15,7 @@ public:
 	BString		authKey;
 	BString		authVerifier;
 	BString		refreshToken;
-	int			maxThreads = 10;
+	int			maxThreads;
 	//remote cursor, so dropbox can keep sync of what we got last
 	BString 		cursor;
 	//local time we last synced, so we can detect changes after that while detached

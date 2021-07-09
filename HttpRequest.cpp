@@ -301,7 +301,9 @@ bool HttpRequest::UploadChunked(const char * url, const char * headerdata, const
 	fReadFileCallbackFile = fopen(fullPath, "rb");
 	
 	if (!fReadFileCallbackFile) {
-		return false;	
+		response = BString("Could not open file: ");
+		response << fullPath;
+		return false;
 	}
 	
 	// bump file forward to offset

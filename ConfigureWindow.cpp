@@ -92,10 +92,12 @@ ConfigureWindow::MessageReceived(BMessage *msg)
 			_RequestAuthCode();
 			break;
 		case M_MAX_THREADS_CHANGED:
-			char val[2];
-			sprintf(val,"%d",fMaxThreads->Value());
-			fMaxThreadsCountLabel->SetText(val);
-			break;
+			{
+				BString val = BString("");
+				val << fMaxThreads->Value();
+				fMaxThreadsCountLabel->SetText(val);
+				break;
+			}
 		default:
 		{
 			BWindow::MessageReceived(msg);
@@ -108,7 +110,7 @@ bool
 ConfigureWindow::QuitRequested(void)
 {
 	gSettings.authKey=BString(fAuthorizationCode->TextView()->Text());
-	gSettings.maxThreads=fMaxThreads->Position();
+	gSettings.maxThreads=(int)fMaxThreads->Position();
 	gSettings.SaveSettings();
 	BMessenger msgr = BMessenger(APP_SIGNATURE);
 	msgr.SendMessage(SETTINGS_UPDATE);

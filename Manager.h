@@ -74,7 +74,7 @@ class Manager
 		static BObjectList<Activity> * fQueuedActivities;
 		static BLocker * fActivityLocker;
 		int fMaxThreads;
-		int fErrorCount = 0;
+		int fErrorCount;
 		thread_id fManagerThread;
 		thread_id fUploadManagerThread;
 		BList fUploadCommits;
@@ -96,34 +96,34 @@ class Manager
 		void QueueActivity(Activity ** activity, SupportedActivities type);
 		
 		//manager thread
-		static int ManagerThread_static(void *manager);
+		static status_t ManagerThread_static(void *manager);
 		int ManagerThread_func();
 		
 		//checker thread
 		thread_id	fCheckerThread;
-		static int CheckerThread_static(void *app);
+		static status_t CheckerThread_static(void *app);
 		int CheckerThread_func();
 
 //bulk ops support		
 		//create thread
-		static int CreateWorkerThread_static(void *manager);
+		static status_t CreateWorkerThread_static(void *manager);
 		int CreateWorkerThread_func();
 		//move thread
-		static int MoveWorkerThread_static(void *manager);
+		static status_t MoveWorkerThread_static(void *manager);
 		int MoveWorkerThread_func();
 		//delete thread
-		static int DeleteWorkerThread_static(void *manager);
+		static status_t DeleteWorkerThread_static(void *manager);
 		int DeleteWorkerThread_func();
 		//upload manager thread
-		static int UploadThread_static(void *manager);
+		static status_t UploadThread_static(void *manager);
 		int UploadThread_func();	
 
 //other bits
 		//download thread
-		static int DownloadWorkerThread_static(void *manager);
+		static status_t DownloadWorkerThread_static(void *manager);
 		int DownloadWorkerThread_func();
 		//upload thread
-		static int UploadWorkerThread_static(void *manager);
+		static status_t UploadWorkerThread_static(void *manager);
 		int UploadWorkerThread_func();
 		
 		void LogUploadCommit(BString * commit);

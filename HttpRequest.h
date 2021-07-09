@@ -21,7 +21,7 @@ public:
 	static bool GlobalInit(void);
 	static void GlobalCleanup(void);
 private:
-	CURL *fCurlHandle = NULL;
+	CURL *fCurlHandle;
 	FILE * fReadFileCallbackFile;
 	size_t fReadLimitCallbackCount;
 	size_t fMaxChunkSize;

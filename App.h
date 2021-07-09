@@ -2,6 +2,9 @@
 #define APP_H
 
 #include <Application.h>
+#include <Messenger.h>
+
+#include "DeskbarIcon.h"
 
 class App : public BApplication
 {
@@ -12,6 +15,7 @@ public:
 	void MessageReceived(BMessage *msg);
 	
 private:
+
 };
 
 

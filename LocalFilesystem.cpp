@@ -70,7 +70,7 @@ bool LocalFilesystem::TestLocation(BMessage * dbMessage)
 				BNode node (&fsentry);
 				node.GetModificationTime(&modtime);
 				node.GetSize(&size);
-				sSize=dbMessage->GetDouble("size",0); //this shouldn't be a double?
+				sSize=(off_t)dbMessage->GetDouble("size",0); //this shouldn't be a double?
 				//TODO: eww
 				sModified = DropboxSupport::ConvertTimestampToSystem(dbMessage->GetString("client_modified"));
 				needsUpdate = (sSize != size || sModified > modtime);			
@@ -111,7 +111,7 @@ bool LocalFilesystem::TestLocation(BMessage * dbMessage)
 			needsUpdate = false;	
 		}
 		else {
-			LogInfoLine("Unhandled entryType encountered");
+			gGlobals.SendNotification("Filesystem","Unhandled entryType encountered", true);
 		}	
 	}
 	return needsUpdate;	
@@ -253,11 +253,7 @@ void LocalFilesystem::RecursivelyWatchDirectory(const char * fullPath, uint32 fl
 	//add node watcher to this dir
 	directory.GetEntry(&entry);
 	WatchEntry(&entry, flags);
-	if (flags != B_STOP_WATCHING) 
-	{
-		LogInfo("Watching directory: ");
-		LogInfoLine(fullPath);
-	}	
+
 	//add node watchers to any child dirs
 	while (directory.GetNextEntry(&entry) == B_OK)
 	{
@@ -323,7 +319,6 @@ void LocalFilesystem::ApplyFullPathToRelativeBasePath(BString &relative)
 
 void LocalFilesystem::WatchDirectories()
 {
-		LogInfo("Starting watcher\n");
 		BString path = BString(fCloudRootPath);
 		LocalFilesystem::ApplyFullPathToRelativeBasePath(path);
 		LocalFilesystem::RecursivelyWatchDirectory(path, WATCH_FLAGS);	
@@ -342,8 +337,6 @@ LocalFilesystem::trackeddata * LocalFilesystem::FindTrackedEntry(node_ref find)
 
 void LocalFilesystem::RemoveTrackedEntriesForPath(const char *fullPath)
 {
-	LogInfo("Removing all tracked entries for path: ");
-	LogInfoLine(fullPath);
 	for (int i=0; i<sTrackedEntries.CountItems(); i++)
 	{
 		trackeddata *file = (trackeddata *)sTrackedEntries.ItemAt(i);
@@ -359,7 +352,6 @@ void LocalFilesystem::RemoveTrackedEntriesForPath(const char *fullPath)
 }
 void LocalFilesystem::RemoveTrackedEntry(node_ref * find) 
 {	
-	node_ref ref;
 	for (int i=0; i<sTrackedEntries.CountItems(); i++)
 	{
 		trackeddata *file = (trackeddata *)sTrackedEntries.ItemAt(i);
@@ -432,7 +424,6 @@ void LocalFilesystem::HandleCreated(BMessage * msg)
 	{
 		if (!IsInIgnoredList(path.Path())) {
 	 		fManager->QueueCreate(dbpath);
-			LogInfoLine("Entry Folder Created");
 			//need to recursively upload folder contents
 			RecursiveAddToCloud(path.Path());
 			WatchEntry(&new_file, WATCH_FLAGS);
@@ -444,9 +435,8 @@ void LocalFilesystem::HandleCreated(BMessage * msg)
 		time_t modified;
 		new_file.GetModificationTime(&modified);
 		new_file.GetSize(&size);
-		if (!IsInIgnoredList(path.Path())) {
+		if (!IsInIgnoredList(path.Path()) && new_file.Exists()) {
 			fManager->QueueUpload(fullpath, dbpath, modified, size); 
-			LogInfoLine("Entry File Created");
 		}
 		WatchEntry(&new_file, WATCH_FLAGS);
 	}
@@ -495,7 +485,6 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 			to_entry.GetModificationTime(&modified);
 			to_entry.GetSize(&size);
 			if (!IsInIgnoredList(fullpath)) {
-				LogInfoLine("Move into Cloud");
 				if (to_entry.IsDirectory())
 				{
 					//upload contents of directory also as it's not being tracked yet
@@ -516,7 +505,6 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 			ConvertFullPathToCloudRelativePath(topath);
 			StopWatchingNodeRef(&tracked_file->nref);
 			if (!IsInIgnoredList(path.Path())) {
-				LogInfoLine("Move within Cloud");
 				fManager->QueueMove(frompath, topath);
 				WatchEntry(&to_entry, WATCH_FLAGS);
 			}
@@ -538,8 +526,6 @@ void LocalFilesystem::HandleMoved(BMessage * msg)
 						StopWatchingNodeRef(&tracked_file->nref);		
 					}
 					fManager->QueueDelete(frompath);
-					LogInfo(frompath);
-					LogInfoLine(" Remove from Cloud");
 				}
 			}
 	}
@@ -569,8 +555,6 @@ void LocalFilesystem::HandleRemoved(BMessage * msg)
 		}
 		ConvertFullPathToCloudRelativePath(path);			
 		fManager->QueueDelete(path);
-		LogInfo(path);
-		LogInfoLine(" Entry Removed");
 	}
 }
 
@@ -596,7 +580,6 @@ void LocalFilesystem::HandleChanged(BMessage * msg)
 		entry.GetSize(&size);
 		if (!IsInIgnoredList(td->path->Path())) {
 			fManager->QueueUpload(td->path->Path(), dbpath, modified, size); 
-			LogInfoLine("Entry Changed");
 		}
 	}
 }

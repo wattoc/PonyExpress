@@ -34,19 +34,20 @@ class DeskbarIcon : public BView
 	private:
 		void Init(void);
 		void ConnectToParent(void);
-		BBitmap *icon = NULL;
-		BBitmap *iconexclamation = NULL;
-		BBitmap *iconup = NULL;
-		BBitmap *icondown = NULL;
-		BBitmap *iconcloud = NULL;
-		ConfigureWindow *configureWindow = NULL;
+		BBitmap *icon;
+		BBitmap *iconexclamation;
+		BBitmap *iconup;
+		BBitmap *icondown;
+		BBitmap *iconcloud;
+		ConfigureWindow *configureWindow;
 		BPopUpMenu *popUp;
+
 		int counter;
-		bool parentConnected = false;
-		bool activityError = false;
-		bool activityUp = false;
-		bool activityDown = false;
-		bool activityUpDown = false;
+		bool parentConnected;
+		bool activityError;
+		bool activityUp;
+		bool activityDown;
+		bool activityUpDown;
 };
 
 #endif
