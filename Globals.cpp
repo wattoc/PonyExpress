@@ -96,7 +96,7 @@ void Globals::ShowAbout()
 {
 	BAboutWindow * aboutWindow = new BAboutWindow("PonyExpress",APP_SIGNATURE);
 	aboutWindow->AddDescription("A native Haiku cloud folder synchronisation application");
-	aboutWindow->SetVersion("0.1.1");	
+	aboutWindow->SetVersion("0.1.2");	
 	aboutWindow->AddCopyright(2021, "Craig Watson");
 	aboutWindow->Show();
 }
