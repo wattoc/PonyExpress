@@ -743,6 +743,7 @@ time_t DropboxSupport::ConvertTimestampToSystem(const char * timestamp)
 	struct tm tm;
 	strptime(timestamp, DROPBOX_TIMESTAMP_STRING, &tm);
 	utctime = mktime(&tm);
+	tm.tm_idst = -1;
 	localtime_r(&utctime, &tm);
 	return mktime(&tm);
 }
@@ -751,7 +752,7 @@ const char * DropboxSupport::ConvertSystemToTimestamp(time_t system)
 {
 	struct tm * tm;
 	char * buffer = new char[80];
-	tm = localtime(&system);
+	tm = gmtime(&system);
 	strftime(buffer, 80, DROPBOX_TIMESTAMP_STRING, tm);
 	return buffer;
 }

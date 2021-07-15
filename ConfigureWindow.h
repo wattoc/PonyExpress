@@ -24,6 +24,7 @@ private:
 			BStringView *fMaxThreadsLabel;
 			BStringView *fMaxThreadsCountLabel;
 			BSlider 	*fMaxThreads;
+			BLayoutItem * fAuthTextView;
 									
 };
 

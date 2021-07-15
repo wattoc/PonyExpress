@@ -47,8 +47,8 @@ ConfigureWindow::ConfigureWindow(void)
 	fAuthorizationCode = new BTextControl("Authorization Code:", gSettings.authKey ,new BMessage(M_AUTH_CODE_CHANGED));
 	fReqAuthorization = new BButton("reqAuthorization", "Request Code", new BMessage(M_REQ_AUTH_CODE));
 	fReqAuthorization->ResizeToPreferred();
-	BLayoutItem * authTextView = fAuthorizationCode->CreateTextViewLayoutItem();
-	authTextView->SetExplicitMinSize(BSize(300,authTextView->PreferredSize().Height()));
+	fAuthTextView = fAuthorizationCode->CreateTextViewLayoutItem();
+	fAuthTextView->SetExplicitMinSize(BSize(300,fAuthTextView->PreferredSize().Height()));
 	fMaxThreadsLabel = new BStringView("maxthreadslabel","Maximum Threads:");
 	fMaxThreadsCountLabel = new BStringView("maxthreadscountlabel","");
 	fMaxThreads = new BSlider("maxThreads", NULL, new BMessage(M_MAX_THREADS_CHANGED), 1, 10, B_HORIZONTAL);
@@ -60,7 +60,7 @@ ConfigureWindow::ConfigureWindow(void)
 	BLayoutBuilder::Group<>(fGeneralTab, B_VERTICAL,0)
 		.AddGrid(B_USE_DEFAULT_SPACING< B_USE_SMALL_SPACING)
 		.Add(fAuthorizationCode->CreateLabelLayoutItem(), 0, 0)
-		.Add(authTextView, 1, 0, 2)
+		.Add(fAuthTextView, 1, 0, 2)
 		.Add(fReqAuthorization,1,1, 2)
 		.Add(fMaxThreadsLabel,0,2)
 		.Add(fMaxThreads,1,2)

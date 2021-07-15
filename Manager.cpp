@@ -135,6 +135,7 @@ void Manager::PerformPolledUpdate()
 				bool hasMore = true;
 				while (hasMore)
 				{
+					hasMore = false;
 					BList items = BList();
 					BList updateItems = BList();
 					// list or longpoll
@@ -143,10 +144,16 @@ void Manager::PerformPolledUpdate()
 					gSettings.Unlock();	
 					if (cursor.Length() == 0)
 					{		
-						cs->ListFiles("", true, items, hasMore);
+						if (!cs->ListFiles("", true, items, hasMore))
+						{
+							NotifyError(cs->GetLastError(), cs->GetLastErrorMessage());			
+						}
 					} else
 					{
-						cs->GetFolder(items, hasMore);
+						if (!cs->GetFolder(items, hasMore))
+						{
+							NotifyError(cs->GetLastError(), cs->GetLastErrorMessage());
+						}
 					}
 					for(int i=0; i < items.CountItems(); i++)
 					{
