@@ -46,23 +46,33 @@ class Manager
 
 		class Activity {
 			public:
-				Activity(SupportedClouds cloud, SupportedActivities perform, const char * source, const char * dest, time_t modified, off_t size)
+				Activity(SupportedActivities perform, const char * source, const char * dest, time_t modified, off_t size)
 				{
-					actCloud = cloud;
 					action = perform;
-					sourcePath = new BString(source);
-					destPath = new BString(dest);
+					sourcePath = BString(source);
+					destPath = BString(dest);
 					modifiedTime = modified;
 					fileSize = size;
+					next = NULL;
 				};
 				~Activity(void);
+				
+				Activity(SupportedActivities perform)
+				{
+					action = perform;
+					sourcePath = BString("empty");
+					destPath = BString("empty");
+					next = NULL;
+				};
+				
+				void AddNext(Activity * activity) { next = activity; }
 			
-				SupportedClouds actCloud;
 				SupportedActivities action;
 				time_t modifiedTime;
 				off_t fileSize;
-				BString * sourcePath;
-				BString * destPath;
+				BString sourcePath;
+				BString destPath;
+				Activity * next;
 		};
 
 		
@@ -71,12 +81,17 @@ class Manager
 		LocalFilesystem * fFileSystem;
 		SupportedClouds fRunningCloud;
 	
-		static BObjectList<Activity> * fQueuedActivities;
-		static BLocker * fActivityLocker;
+		BObjectList<Activity> * fQueuedActivities;
+		BLocker * fActivityLocker;
 		int fMaxThreads;
 		int fErrorCount;
 		thread_id fManagerThread;
 		thread_id fUploadManagerThread;
+		thread_id fCreateThread;
+		thread_id fDeleteThread;
+		thread_id fMoveThread;
+		thread_id * fDownloadThreads;
+		
 		BList fUploadCommits;
 		BObjectList<Activity> * fQueuedUploads;
 		BLocker * fQueuedUploadsLocker;
@@ -86,14 +101,13 @@ class Manager
 		void NotifyError(const char * error, const char * summary);
 		
 		//Activity Queue management
-		static Activity & Dequeue(SupportedActivities type);
-		Activity & DequeueUpload(void);
+		Activity * Dequeue(SupportedActivities type);
+		Activity * DequeueUpload(void);
 		int UploadTotal(void);
-		static int ActivityTotalByType(SupportedActivities type);
-		static int ActivityTotal(void);
+		int ActivityTotalByType(SupportedActivities type);
+		int ActivityTotal(void);
 		void TrySpawnWorker(void);
-		void TryWakeUploadManager(void);
-		void QueueActivity(Activity ** activity, SupportedActivities type);
+		void QueueActivity(Activity * activity, SupportedActivities type, bool triggerWorker = true);
 		
 		//manager thread
 		static status_t ManagerThread_static(void *manager);

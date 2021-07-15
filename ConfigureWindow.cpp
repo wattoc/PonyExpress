@@ -12,7 +12,7 @@
 #include "Globals.h"
 
 enum {
-		M_AUTH_CODE_CHANGED = 'accd',
+		M_AUTH_CODE_CHANGED = 'aucd',
 		M_REQ_AUTH_CODE 	= 'rqac',
 		M_MAX_THREADS_CHANGED = 'mtrc'
 };

@@ -35,10 +35,9 @@ public:
 	
 	//file listing/watching
 	//returns true if there are more files to get
-	bool ListFiles(const char * path, bool recurse, BList & items);
-	int LongPollForChanges(BList & items);
-	bool GetChanges(BList & items, bool fullupdate);
-		
+	bool LongPollForChanges(int & backoff);
+	bool ListFiles(const char * path, bool recurse, BList & items, bool & hasmore);
+	bool GetFolder(BList & items, bool & hasmore);
 	//file get/put/delete
 	bool Upload(const char * file, const char * destfullpath, time_t modified, off_t size, BString & commitentry);
 	bool Download(const char * file, const char * destfullpath);

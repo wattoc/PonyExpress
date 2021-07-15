@@ -13,6 +13,7 @@ Settings gSettings;
 Settings::Settings(void)
 {
 	maxThreads = 10;
+
 	LoadSettings();	
 }
 
@@ -24,7 +25,7 @@ Settings::LoadSettings(void)
 	BFile settingsFile;
 	BString readString;
 	BMessage settings = BMessage();
-	
+
 	if(find_directory(B_USER_SETTINGS_DIRECTORY, &configPath) == B_OK) 
 	{
 		configDirectory.SetTo(configPath.Path());
@@ -43,6 +44,13 @@ Settings::LoadSettings(void)
 				}
 				settingsFile.Unlock();		
 			}
+		}
+		else
+		{
+			authKey.SetTo("");
+			authVerifier.SetTo("");
+			refreshToken.SetTo("");
+			cursor.SetTo("");
 		}
 	}
 }

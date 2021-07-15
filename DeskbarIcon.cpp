@@ -218,6 +218,8 @@ void DeskbarIcon::MessageReceived(BMessage *msg)
 			}
 		case B_QUIT_REQUESTED:
 			RemoveFromDeskbar();
+			if (configureWindow != NULL)
+					configureWindow->Quit();
 			break;
 		default:
 			BView::MessageReceived(msg);

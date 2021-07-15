@@ -94,10 +94,14 @@ void Globals::SendProgressNotification(const char * title, const char * content,
 
 void Globals::ShowAbout()
 {
+	const char * authors[] = {
+		"Craig Watson",
+		NULL
+	};
 	BAboutWindow * aboutWindow = new BAboutWindow("PonyExpress",APP_SIGNATURE);
 	aboutWindow->AddDescription("A native Haiku cloud folder synchronisation application");
-	aboutWindow->SetVersion("0.1.2");	
 	aboutWindow->AddCopyright(2021, "Craig Watson");
+	aboutWindow->AddAuthors(authors);
 	aboutWindow->Show();
 }
 

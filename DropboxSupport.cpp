@@ -90,19 +90,20 @@ bool DropboxSupport::GetToken()
 	if (time(NULL) < sTokenExpiry) return true;
 
 	gSettings.Lock();
-	if (gSettings.refreshToken.Length() > 0) {
+	if (gSettings.refreshToken.Length() > 0) 
+	{
 		// use refresh token to get a new access token	
 		postData.Append("&grant_type=refresh_token");
 		postData.Append("&refresh_token=");
 		postData.Append(gSettings.refreshToken.String());
-	
-	} else {
+	} else 
+	{
 		postData.Append("code=");
 		postData.Append(gSettings.authKey);
 		postData.Append("&grant_type=authorization_code");	
 		postData.Append("&code_verifier=");
 		postData.Append(gSettings.authVerifier);
-		}
+	}
 	gSettings.Unlock();
 	
 	postData.Append("&client_id=");
@@ -127,30 +128,37 @@ bool DropboxSupport::GetToken()
 				gSettings.Unlock();
 				sTokenExpiry = time(NULL) + jsonContent.GetInt32("expires_in",0);
 			} else {
+				if (strcmp(fLastError.String(),"invalid_grant") == 0)
+				{
+					//reset refresh token
+					gSettings.refreshToken.SetTo("");					
+				}
 				return false;	
 			}
 		}
   		else {
+  			fLastError = BString("Get Token API");
+			fLastErrorSummary = response.String();	
   			return false;	
   		}
 	}
 	else {
-		return false;	
+		fLastError = BString("Get Token API");
+		fLastErrorSummary = response.String();	
+  		return false;	
 	}
 	
 	return true;
 }
 
-bool DropboxSupport::ListFiles(const char * path, bool recurse, BList & items) 
+bool DropboxSupport::ListFiles(const char * path, bool recurse, BList & items, bool & hasmore) 
 {
 	BString response;
 	BMessage jsonContent;
 	BString postData = BString("");
 	BString url = BString(DROPBOX_API_URL);
-	BString localCursor = BString("");
-	bool hasMore = true;
+	BString cursor = BString("");
 	bool listingStatus = true;
-	HttpRequest * req = new HttpRequest();
 	
 	url.Append("2/files/list_folder");
 
@@ -162,73 +170,75 @@ bool DropboxSupport::ListFiles(const char * path, bool recurse, BList & items)
 	postData.Append(recurse ? "true" : "false");
 	postData.Append("}");
 	
-	while (hasMore) {
-		hasMore = false;
-		if (GetToken()) 
+	hasmore = false;
+	if (GetToken()) 
+	{
+		HttpRequest * req = new HttpRequest();
+		//printf("List files\n");
+		//printf(postData.String());
+		//printf("\n");
+
+		if (req->Post(url.String(), postData.String(), postData.Length(), response, &sAccessToken, true)) 
 		{
-			if (req->Post(url.String(), postData.String(), postData.Length(), response, &sAccessToken, true)) 
+			//printf(response.String());
+			//printf("\n");
+			status_t status = BJson::Parse(response.String(),jsonContent);
+		
+			if (status == B_OK) 
 			{
-				status_t status = BJson::Parse(response.String(),jsonContent);
-			
-				if (status == B_OK) 
+				int index = 0;
+				
+				BMessage array;
+				status = jsonContent.FindMessage("entries", 0, &array);
+				while (status == B_OK) 
 				{
-					int index = 0;
-					
-					BMessage array;
-					status = jsonContent.FindMessage("entries", 0, &array);
-					while (status == B_OK) 
+					BMessage * entry = new BMessage();
+					char msgname[10];
+					sprintf(msgname, "%d", index);
+					status = array.FindMessage(msgname, 0, entry);
+					if (status == B_OK) 
 					{
-						BMessage * entry = new BMessage();
-						char msgname[10];
-						sprintf(msgname, "%d", index);
-						status = array.FindMessage(msgname, 0, entry);
-						if (status == B_OK) 
-						{
-							items.AddItem(entry);
-						}
-						index++;
-					} 			
-					//request the next set of listings
-					hasMore = jsonContent.GetBool("has_more");
-					if (hasMore) {
-						localCursor = jsonContent.GetString("cursor");
-						url = BString(DROPBOX_API_URL);
-						url.Append("2/files/list_folder/continue");
-						postData = BString("\{\"cursor\": \"");
-						postData.Append(localCursor);
-						postData.Append("\"}");
-					}			
-				}
-				else {
-					fLastError = BString("API");
-					fLastErrorSummary = response.String();	
-				}			
+						items.AddItem(entry);
+					} else 
+					{
+						delete entry;	
+					}
+					index++;
+				} 			
+				//request the next set of listings
+				cursor = jsonContent.GetString("cursor");
+				hasmore = jsonContent.GetBool("has_more");			
 			}
+			else {
+				fLastError = BString("Remote list API");
+				fLastErrorSummary = response.String();	
+			}			
 		}
-		else {
-			listingStatus = false;
-		}
+		delete req;
 	}
-	delete req;
-	gSettings.Lock();
-	gSettings.cursor = jsonContent.GetString("cursor");
-	gSettings.SaveSettings();
-	gSettings.Unlock();
+	else {
+		listingStatus = false;
+	}
+
+	if (listingStatus) {
+		gSettings.Lock();
+		gSettings.cursor.SetTo(cursor.String());
+		gSettings.SaveSettings();
+		gSettings.Unlock();
+	}
 	return listingStatus;
 }
 
-int DropboxSupport::LongPollForChanges(BList & items)
+bool DropboxSupport::LongPollForChanges(int & backoff)
 {
 	BString response = NULL;
 	BMessage jsonContent;
-	int backoff = 0;
 	BString postData = BString("");
 	BString url = BString(DROPBOX_NOTIFY_URL);
 	BString localCursor = BString("");
 	BString token = BString("");
 	HttpRequest * req = new HttpRequest();
-	bool hasMore = true;
-	bool reset = false;
+	bool changes = false;
 	url.Append("2/files/list_folder/longpoll");
 
 	postData.Append("\{\"cursor\": \"");
@@ -239,13 +249,22 @@ int DropboxSupport::LongPollForChanges(BList & items)
 	postData.Append("30"); // may want to make this configurable later
 	postData.Append("}");
 	
+	//printf("Long poll\n");
+	//printf(postData.String());
+	//printf("\n");
+
 	//long poll request
-	if (req->Post(url.String(), postData.String(), postData.Length(), response, &token, true)) {
+	if (req->Post(url.String(), postData.String(), postData.Length(), response, &token, true)) 
+	{
+		//printf(response.String());
+		//printf("\n");
+
 		status_t status = BJson::Parse(response.String(),jsonContent);
 	
-		if (status == B_OK) {
+		if (status == B_OK) 
+		{
 			BMessage error;
-			bool changes = jsonContent.GetBool("changes", false);
+			changes = jsonContent.GetBool("changes", false);
 			backoff = (int)jsonContent.GetDouble("backoff", 0);
 			if (jsonContent.FindMessage("error", 0, &error) == B_OK)
 			{
@@ -255,120 +274,102 @@ int DropboxSupport::LongPollForChanges(BList & items)
 				if (strcmp(fLastError.String(), "reset")==0)
 				{
 					//cursor has reset, need to do a full update
-					reset = true;
+					gSettings.Lock();
+					gSettings.cursor=BString("");
+					gSettings.Unlock();
+					changes = true;
 				} else {
 					backoff = -1;	
 				}
-			}
-			if (!changes) 
-			{
-				delete req;
-				return backoff;
-			}
-				
-		} else {
-			fLastError = BString("API");
+			}				
+		} else 
+		{
+			fLastError = BString("Remote Poll API");
 			fLastErrorSummary = response.String();
 
-			delete req;
-			return -1;	
+			backoff = -1;	
 		}
 	}
-	//we can handle a reset cursor here
-	//by doing a full list instead
-	url = BString(DROPBOX_API_URL);
-	gSettings.Lock();
-	localCursor = BString(gSettings.cursor);
-	gSettings.Unlock();
-
-	if (reset) 
-	{
-		url.Append("2/files/list_folder");
 	
-		postData.Append("\{\"path\": \"");
-		postData.Append("\", \"include_deleted\": ");
-		postData.Append("false"); // may want to make this configurable later
-		postData.Append(", \"recursive\": ");
-		postData.Append("true");
-		postData.Append("}");	
-	} 
-	else 
-	{
-		url.Append("2/files/list_folder/continue");
-		postData = BString("\{\"cursor\": \"");
-		postData.Append(localCursor);
-		postData.Append("\"}");
-	}
-	while (hasMore) {
-		hasMore = false;
-		if (GetToken())
-		{
-			if (req->Post(url.String(), postData.String(), postData.Length(), response, &sAccessToken, true)) 
-			{
-				status_t status = BJson::Parse(response.String(),jsonContent);		
-				if (status == B_OK) 
-				{
-					int index = 0;
-					
-					BMessage array;
-					status = jsonContent.FindMessage("entries", 0, &array);
-					while (status == B_OK) 
-					{
-						BMessage * entry = new BMessage();
-						char msgname[10];
-						sprintf(msgname, "%d", index);
-						status = array.FindMessage(msgname, 0, entry);
-						if (status == B_OK) 
-						{
-							items.AddItem(entry);
-						}
-						index++;
-					} 			
-					//request the next set of listings
-					hasMore = jsonContent.GetBool("has_more");
-					if (hasMore) {
-						localCursor = jsonContent.GetString("cursor");
-						url = BString(DROPBOX_API_URL);
-						url.Append("2/files/list_folder/continue");
-						postData = BString("\{\"cursor\": \"");
-						postData.Append(localCursor);
-						postData.Append("\"}");
-					}			
-				} else {
-					fLastError = BString("API");
-					fLastErrorSummary = response.String();
-					backoff = -1;
-				}			
-			}
-		}
-	}
 	delete req;
-	gSettings.Lock();
-	gSettings.cursor = jsonContent.GetString("cursor");
-	gSettings.SaveSettings();
-	gSettings.Unlock();
-	return backoff;	
+	return changes;
 }
 
-bool DropboxSupport::GetChanges(BList & items, bool fullupdate)
+bool DropboxSupport::GetFolder(BList & items, bool & hasmore)
 {
-	size_t cursorLength = 0;
-	
+	BString response = NULL;
+	BMessage jsonContent;
+	bool listingStatus = true;
+	BString postData = BString("");
+	BString url = BString(DROPBOX_API_URL);
+	BString cursor = BString("");
+
+	url.Append("2/files/list_folder/continue");
+	postData = BString("\{\"cursor\": \"");
 	gSettings.Lock();
-	cursorLength = gSettings.cursor.Length();
+	postData.Append(gSettings.cursor);
 	gSettings.Unlock();
-	
-	if (cursorLength == 0 || fullupdate) {
-		gGlobals.SendNotification("Dropbox","No cursor available, performing full sync", false);
-		return ListFiles("", true, items);
+	postData.Append("\"}");
+	hasmore = false;
+	if (GetToken())
+	{
+		//printf("Get Folder\n");
+		//printf(postData.String());
+		//printf("\n");
+		HttpRequest * req = new HttpRequest();
+		if (req->Post(url.String(), postData.String(), postData.Length(), response, &sAccessToken, true)) 
+		{
+			//printf(response.String());
+			//printf("\n");
+
+			status_t status = BJson::Parse(response.String(),jsonContent);		
+			if (status == B_OK) 
+			{
+				int index = 0;
+				
+				BMessage array;
+				status = jsonContent.FindMessage("entries", 0, &array);
+				while (status == B_OK) 
+				{
+					BMessage * entry = new BMessage();
+					char msgname[10];
+					sprintf(msgname, "%d", index);
+					status = array.FindMessage(msgname, 0, entry);
+					if (status == B_OK) 
+					{
+						items.AddItem(entry);
+					} else 
+					{
+						delete entry;	
+					}
+					index++;
+				} 			
+				//request the next set of listings
+				cursor = jsonContent.GetString("cursor");
+				hasmore = jsonContent.GetBool("has_more");
+			} else {
+				fLastError = BString("Remote Poll API");
+				fLastErrorSummary = response.String();
+				listingStatus = false;
+			}			
+		}
+		delete req;
+	} else 
+	{
+		listingStatus = false;
 	}
-		
-	return true;
+	if (listingStatus)
+	{
+		gSettings.Lock();
+		gSettings.cursor.SetTo(cursor.String());
+		gSettings.SaveSettings();
+		gSettings.Unlock();
+	}
+	return listingStatus;	
 }
 
 bool DropboxSupport::Upload(const char * file, const char * destfullpath, time_t modified, off_t size, BString & commitentry)
 {
-	BString response;
 	BMessage jsonContent;
 	BString url = BString(DROPBOX_CONTENT_URL);
 	BString headerdata = BString("Dropbox-API-Arg: ");
@@ -397,8 +398,11 @@ bool DropboxSupport::Upload(const char * file, const char * destfullpath, time_t
 	{
 		if (GetToken()) 
 		{
+			BString response;
 			status_t status;
 			result &= req->UploadChunked(url.String(), headerdata.String(), file, &sAccessToken, DROPBOX_UPLOAD_CHUNK, offset, response);
+			if (strcmp(response.String(),"null")==0 || response.Length() == 0)
+				response = BString("{\"ok\": true }");
 			status = BJson::Parse(response.String(),jsonContent);
 			if (status == B_OK) 
 			{
@@ -410,7 +414,7 @@ bool DropboxSupport::Upload(const char * file, const char * destfullpath, time_t
 					result = false;
 				}
 			} else {
-				fLastError = BString("API");
+				fLastError = BString("Upload API");
 				fLastErrorSummary = response.String();
 				delete req;
 				return false;
@@ -527,7 +531,7 @@ bool DropboxSupport::CreatePaths(BList & paths)
 					result = false;
 				}
 			} else {
-				fLastError = BString("API");
+				fLastError = BString("Remote Create API");
 				fLastErrorSummary = response.String();	
 			}
 		}
@@ -679,7 +683,7 @@ bool DropboxSupport::UploadBatch(BList & commitdata, BString & asyncjobid)
 				}
 				asyncjobid.Append(jsonContent.GetString("async_job_id"));
 			} else {
-				fLastError = BString("API");
+				fLastError = BString("Batch Upload API");
 				fLastErrorSummary = response.String();
 			}
 		}	
@@ -721,7 +725,7 @@ bool DropboxSupport::UploadBatchCheck(const char * asyncjobid, BString & jobstat
 					jobstatus.Append(jsonContent.GetString(".tag"));
 				}
 			}else {
-				fLastError = BString("API");
+				fLastError = BString("Batch Upload Check API");
 				fLastErrorSummary = response.String();
 			}
 		}	

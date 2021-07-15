@@ -4,8 +4,8 @@ resource app_flags B_EXCLUSIVE_LAUNCH | B_BACKGROUND_APP;
 
 resource app_version {
 	major = 0,
-	middle = 1,
-	minor = 2,
+	middle = 2,
+	minor = 0,
 	variety = B_APPV_ALPHA,
 	internal = 0,
 

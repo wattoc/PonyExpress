@@ -11,11 +11,6 @@
 
 static const char * CloudPaths[] = {"", "Dropbox/"};
 
-
-BObjectList<Manager::Activity> * Manager::fQueuedActivities = new BObjectList<Manager::Activity>[END];
-
-BLocker * Manager::fActivityLocker = new BLocker(true);
-
 Manager::Manager(SupportedClouds cloud, int maxWorkerThreads)
 {
 	fErrorCount = 0;
@@ -27,7 +22,18 @@ Manager::Manager(SupportedClouds cloud, int maxWorkerThreads)
 	fUploadAsyncJobId = BString("");
 	fUploadCommitLocker = new BLocker(true);
 	fQueuedUploadsLocker = new BLocker(true);
+	fActivityLocker = new BLocker(true);
+	fQueuedActivities = new BObjectList<Manager::Activity>();
 	fManagerThread = spawn_thread(ManagerThread_static, "manager", B_LOW_PRIORITY, (void *)this);
+	fUploadManagerThread = -1;
+	fCreateThread = -1;
+	fDeleteThread = -1;
+	fMoveThread = -1;
+	fDownloadThreads = new thread_id[fMaxThreads];	
+	for (int i=0; i < fMaxThreads; i++)
+	{
+		fDownloadThreads[i] = -1;
+	}
 	resume_thread(fManagerThread);
 }
 
@@ -37,6 +43,7 @@ Manager::~Manager()
 	send_data(fManagerThread, KILL_THREAD, NULL, 0);	
 	sleep(2);
 	kill_thread(fManagerThread);
+	delete[] fDownloadThreads;
 	delete fUploadCommitLocker;
 	delete fQueuedUploadsLocker;
 	delete fFileSystem;
@@ -44,78 +51,48 @@ Manager::~Manager()
 
 Manager::Activity::~Activity()
 {
-	delete sourcePath;
-	delete destPath;
+
 }
 
 void Manager::PerformFullUpdate(bool forceFull)
 {
 		CloudSupport * cs;
-		BList items = BList();
-		BList updateItems = BList();
-		BList localItems = BList();
+		bool hasMore = true;
 		
 		cs = _GetCloudController();
 		gGlobals.SetActivity(M_ACTIVITY_UPDOWN);
-		cs->GetChanges(items, forceFull);
-		gGlobals.SetActivity(M_ACTIVITY_NONE);
-		for(int i=0; i < items.CountItems(); i++)
+		while (hasMore) 
 		{
-			if (fFileSystem->TestLocation((BMessage*)items.ItemAtFast(i)))
-				updateItems.AddItem(items.ItemAtFast(i));
-		}
-		fFileSystem->ResolveUnreferencedLocals("", items, localItems, forceFull);
-		PullMissing(updateItems);
-		fFileSystem->SendMissing(localItems);
-
-		for(int i=0; i < localItems.CountItems(); i++)
-		{
-			delete (BMessage*)localItems.ItemAtFast(i);
-		}
-
-		for(int i=0; i < items.CountItems(); i++)
-		{
-			delete (BMessage*)items.ItemAtFast(i);
-		}
-		//update the lastLocalSync time
-		gSettings.Lock();
-		gSettings.lastLocalSync = time(NULL);
-		gSettings.SaveSettings();
-		gSettings.Unlock();
-		
-		delete cs;
-
-}
-
-void Manager::PerformPolledUpdate()
-{
-		CloudSupport * cs;
-		int backoff = 0;
-		BList items = BList();
-		BList updateItems = BList();
-		BString cursor;
-		cs = _GetCloudController();
-		gSettings.Lock();
-		cursor = gSettings.cursor;
-		gSettings.Unlock();
-		if (cursor.Length() == 0) 
-		{
-			cs->GetChanges(items, false);
-		} else {
-			backoff = cs->LongPollForChanges(items);
-		}
-		if (backoff < 0) {
-			backoff = 30;
-			NotifyError(cs->GetLastError(), cs->GetLastErrorMessage());
-		}
-		else 
-		{
+			BList items = BList();
+			BList updateItems = BList();
+			BList localItems = BList();
+			size_t cursorLength = 0;
+			gSettings.Lock();
+			cursorLength = gSettings.cursor.Length();
+			gSettings.Unlock();
+			
+			if (cursorLength==0)
+			{				
+				cs->ListFiles("", true, items, hasMore);
+			}
+			else
+			{
+				cs->GetFolder(items, hasMore);
+			}
+			gGlobals.SetActivity(M_ACTIVITY_NONE);
 			for(int i=0; i < items.CountItems(); i++)
 			{
 				if (fFileSystem->TestLocation((BMessage*)items.ItemAtFast(i)))
 					updateItems.AddItem(items.ItemAtFast(i));
 			}
+			fFileSystem->ResolveUnreferencedLocals("", items, localItems, forceFull);
 			PullMissing(updateItems);
+			fFileSystem->SendMissing(localItems);
+	
+			for(int i=0; i < localItems.CountItems(); i++)
+			{
+				delete (BMessage*)localItems.ItemAtFast(i);
+			}
 	
 			for(int i=0; i < items.CountItems(); i++)
 			{
@@ -126,6 +103,69 @@ void Manager::PerformPolledUpdate()
 			gSettings.lastLocalSync = time(NULL);
 			gSettings.SaveSettings();
 			gSettings.Unlock();
+		}			
+		delete cs;
+
+}
+
+void Manager::PerformPolledUpdate()
+{
+		CloudSupport * cs;
+		int backoff = 0;
+		bool changes = false;
+		BString cursor;
+		cs = _GetCloudController();
+		gSettings.Lock();
+		cursor = gSettings.cursor;
+		gSettings.Unlock();
+		if (cursor.Length()==0) 
+		{
+			changes = true; // do a get later
+		} else {
+			changes = cs->LongPollForChanges(backoff);
+		}
+		if (backoff < 0) {
+			backoff = 30;
+			NotifyError(cs->GetLastError(), cs->GetLastErrorMessage());
+		}
+		else 
+		{
+			if (changes) 
+			{
+				bool hasMore = true;
+				while (hasMore)
+				{
+					BList items = BList();
+					BList updateItems = BList();
+					// list or longpoll
+					gSettings.Lock();
+					cursor = gSettings.cursor; //may have been reset during longpoll
+					gSettings.Unlock();	
+					if (cursor.Length() == 0)
+					{		
+						cs->ListFiles("", true, items, hasMore);
+					} else
+					{
+						cs->GetFolder(items, hasMore);
+					}
+					for(int i=0; i < items.CountItems(); i++)
+					{
+						if (fFileSystem->TestLocation((BMessage*)items.ItemAtFast(i)))
+							updateItems.AddItem(items.ItemAtFast(i));
+					}
+					PullMissing(updateItems);
+			
+					for(int i=0; i < items.CountItems(); i++)
+					{
+						delete (BMessage*)items.ItemAtFast(i);
+					}
+					//update the lastLocalSync time
+					gSettings.Lock();
+					gSettings.lastLocalSync = time(NULL);
+					gSettings.SaveSettings();
+					gSettings.Unlock();
+				}
+			}
 		}
 		delete cs;
 		sleep(backoff);
@@ -172,8 +212,6 @@ bool Manager::PullMissing(BList & items)
 	return result;	
 }
 
-
-
 status_t Manager::ManagerThread_static(void *manager)
 {
 	return ((Manager *)manager)->ManagerThread_func();
@@ -189,34 +227,38 @@ void Manager::TrySpawnWorker()
 	}
 }
 
-void Manager::TryWakeUploadManager()
+Manager::Activity * Manager::Dequeue(SupportedActivities type)
 {
-	thread_info info;
-	//wake up manager if it's asleep
-	if (get_thread_info(fUploadManagerThread, &info) == B_OK && (info.state == B_THREAD_RECEIVING || info.state == B_THREAD_WAITING))
-	{
-		send_data(fUploadManagerThread, START_THREAD, NULL, 0);		
-	}
-}
-
-Manager::Activity & Manager::Dequeue(SupportedActivities type)
-{
-	Activity * activity;
+	Activity * activity = NULL;
+	bool match = false;
 	fActivityLocker->Lock();
-	activity = fQueuedActivities[type].ItemAt(0);
-	fQueuedActivities[type].RemoveItemAt(0);
-	fActivityLocker->Unlock();	
-	return *activity;
+	for (int i = 0; i< fQueuedActivities->CountItems(); i++)
+	{
+		activity = fQueuedActivities->ItemAt(i);
+		if (activity->action == type)
+		{
+			match = true;
+			fQueuedActivities->RemoveItemAt(i);
+			break;
+		}
+	}
+	fActivityLocker->Unlock();
+	if (match)
+		return activity;
+	return NULL;
 }
 
-Manager::Activity & Manager::DequeueUpload()
+Manager::Activity * Manager::DequeueUpload()
 {
-	Activity * activity;
+	Activity * activity = NULL;
 	fQueuedUploadsLocker->Lock();
-	activity = fQueuedUploads->ItemAt(0);
-	fQueuedUploads->RemoveItemAt(0);
+	if (fQueuedUploads->CountItems() > 0) 
+	{
+		activity = fQueuedUploads->ItemAt(0);
+		fQueuedUploads->RemoveItemAt(0);
+	}
 	fQueuedUploadsLocker->Unlock();	
-	return *activity;
+	return activity;
 }
 
 int Manager::UploadTotal()
@@ -232,10 +274,7 @@ int Manager::ActivityTotal()
 {
 	int count = 0;
 	fActivityLocker->Lock();	
-	for (int i=0; i < END; i++)
-	{
-		count += fQueuedActivities[i].CountItems();
-	}
+	count = fQueuedActivities->CountItems();
 	fActivityLocker->Unlock();	
 	return count;
 }
@@ -244,7 +283,11 @@ int Manager::ActivityTotalByType(SupportedActivities type)
 {
 	int count = 0;
 	fActivityLocker->Lock();
-	count = fQueuedActivities[type].CountItems();
+	for (int i=0; i < fQueuedActivities->CountItems(); i++)
+	{
+		if (fQueuedActivities->ItemAt(i)->action==type)
+			count++;
+	}
 	fActivityLocker->Unlock();	
 	return count;
 }
@@ -288,29 +331,47 @@ int Manager::ManagerThread_func()
 			newTotal = ActivityTotal();
 		} while(currentTotal != newTotal);
 		
-		thread_id deleteThread = spawn_thread(DeleteWorkerThread_static, "batch delete", B_LOW_PRIORITY, (void *)this);
-		resume_thread(deleteThread);
-		
-		thread_id createThread = spawn_thread(CreateWorkerThread_static, "batch create", B_LOW_PRIORITY, (void *)this);
-		resume_thread(createThread);
-
-		//spin up some download workers
-		for (int i=0; i < fMaxThreads; i++)
+		if (ActivityTotalByType(DELETE)>0 && get_thread_info(fDeleteThread, &info) != B_OK)
 		{
-			thread_id downloadThread = spawn_thread(DownloadWorkerThread_static, "download", B_LOW_PRIORITY, (void *)this);
-			resume_thread(downloadThread);
-		}
-
-		//spin up the upload manager if we can
-		if (get_thread_info(fUploadManagerThread, &info) != B_OK)
+			fDeleteThread = spawn_thread(DeleteWorkerThread_static, "batch delete", B_LOW_PRIORITY, (void *)this);
+			resume_thread(fDeleteThread);
+		} 
+		else 
 		{
-			fUploadManagerThread = spawn_thread(UploadThread_static, "batch upload", B_LOW_PRIORITY, (void *)this);
-			resume_thread(fUploadManagerThread);
+			if (ActivityTotalByType(CREATE)>0 && get_thread_info(fCreateThread, &info) != B_OK)
+			{
+				fCreateThread = spawn_thread(CreateWorkerThread_static, "batch create", B_LOW_PRIORITY, (void *)this);
+				resume_thread(fCreateThread);
+			}
+			else
+			{
+				if (ActivityTotalByType(DOWNLOAD)>0) {
+					//spin up some download workers if there aren't any already
+					for (int i=0; i < fMaxThreads; i++)
+					{
+						if (fDownloadThreads[i] == -1 || get_thread_info(fDownloadThreads[i], &info) != B_OK)
+						{
+							fDownloadThreads[i] = spawn_thread(DownloadWorkerThread_static, "download", B_LOW_PRIORITY, (void *)this);
+							resume_thread(fDownloadThreads[i]);
+						}
+					}
+				}
+				//spin up the upload manager if we can
+				if (ActivityTotalByType(UPLOAD)>0 && get_thread_info(fUploadManagerThread, &info) != B_OK)
+				{
+					fUploadManagerThread = spawn_thread(UploadThread_static, "batch upload", B_LOW_PRIORITY, (void *)this);
+					resume_thread(fUploadManagerThread);
+				}
+				else
+				{
+					if (ActivityTotalByType(MOVE)>0 && get_thread_info(fMoveThread, &info) != B_OK)
+					{
+						fMoveThread = spawn_thread(MoveWorkerThread_static, "batch move", B_LOW_PRIORITY, (void *)this);
+						resume_thread(fMoveThread);
+					}
+				}
+			}
 		}
-		
-		thread_id moveThread = spawn_thread(MoveWorkerThread_static, "batch move", B_LOW_PRIORITY, (void *)this);
-		resume_thread(moveThread);
-
 		if (fErrorCount >= MAX_ERRORS)
 		{
 			gGlobals.SetActivity(M_ACTIVITY_ERROR);
@@ -355,14 +416,17 @@ int Manager::DeleteWorkerThread_func()
 	{
 		CloudSupport *cs;
 		BList deletePaths = BList();
-		Activity * activity = &Dequeue(DELETE);
+		Activity * activity = Dequeue(DELETE);
 		while (activity != NULL)
 		{
-			BString * path =  new BString(activity->sourcePath->String());
+			BString * path =  new BString(activity->sourcePath.String());
 			deletePaths.AddItem(path);
-			// need a new path string added otherwise we lose the string when we delete activity
-			delete activity;
-			activity = &Dequeue(DELETE);
+			// need a new path string added otherwise we lose the string when we delete activity		
+			Activity * nextActivity = activity->next;
+			delete activity;		
+			if (nextActivity != NULL) QueueActivity(nextActivity, nextActivity->action, false);
+			
+			activity = Dequeue(DELETE);
 		}
 		
 		cs = _GetCloudController();
@@ -399,14 +463,16 @@ int Manager::CreateWorkerThread_func()
 	{
 		CloudSupport *cs;
 		BList createPaths = BList();
-		Activity * activity = &Dequeue(CREATE);
+		Activity * activity = Dequeue(CREATE);
 		while (activity != NULL)
 		{
-			BString * path =  new BString(activity->sourcePath->String());
+			BString * path =  new BString(activity->sourcePath.String());
 			createPaths.AddItem(path);
 			// need a new path string added otherwise we lose the string when we delete activity
-			delete activity;
-			activity = &Dequeue(CREATE);
+			Activity * nextActivity = activity->next;
+			delete activity;		
+			if (nextActivity != NULL) QueueActivity(nextActivity, nextActivity->action, false);
+			activity = Dequeue(CREATE);
 		}
 		
 		cs = _GetCloudController();
@@ -446,16 +512,18 @@ int Manager::MoveWorkerThread_func()
 		//TODO: yes this sucks
 		BList toPaths = BList();
 		BList fromPaths = BList();
-		Activity * activity = &Dequeue(MOVE);
+		Activity * activity = Dequeue(MOVE);
 		while (activity != NULL)
 		{
-			BString * from =  new BString(activity->sourcePath->String());
-			BString * to =  new BString(activity->destPath->String());
+			BString * from =  new BString(activity->sourcePath.String());
+			BString * to =  new BString(activity->destPath.String());
 			fromPaths.AddItem(from);
 			toPaths.AddItem(to);
 			// need new path strings added otherwise we lose the string when we delete activity
-			delete activity;
-			activity = &Dequeue(MOVE);
+			Activity * nextActivity = activity->next;
+			delete activity;		
+			if (nextActivity != NULL) QueueActivity(nextActivity, nextActivity->action, false);
+			activity = Dequeue(MOVE);
 		}
 		
 		cs = _GetCloudController();
@@ -495,21 +563,23 @@ int Manager::DownloadWorkerThread_func()
 	{
 		CloudSupport *cs;
 		cs = _GetCloudController();
-		Activity * activity = &Dequeue(DOWNLOAD);
+		Activity * activity = Dequeue(DOWNLOAD);
 		gGlobals.SetActivity(M_ACTIVITY_DOWN);
 
 		while (activity != NULL && fErrorCount < MAX_ERRORS)
 		{
 			BEntry fsentry;
-			if (cs->Download(activity->sourcePath->String(), activity->destPath->String()))
+			if (cs->Download(activity->sourcePath.String(), activity->destPath.String()))
 			{
-				fsentry = BEntry(activity->destPath->String());
+				fsentry = BEntry(activity->destPath.String());
 				fsentry.SetModificationTime(activity->modifiedTime);
 				sleep(1);
 				fFileSystem->WatchEntry(&fsentry, WATCH_FLAGS);
-				fFileSystem->RemoveFromIgnoreList(activity->destPath->String());	
-				delete activity;
-				activity = &Dequeue(DOWNLOAD);
+				fFileSystem->RemoveFromIgnoreList(activity->destPath.String());	
+				Activity * nextActivity = activity->next;
+				delete activity;		
+				if (nextActivity != NULL) QueueActivity(nextActivity, nextActivity->action, false);
+				activity = Dequeue(DOWNLOAD);
 				fErrorCount = 0;
 			} else {
 				NotifyError(cs->GetLastError(), cs->GetLastErrorMessage());
@@ -519,7 +589,7 @@ int Manager::DownloadWorkerThread_func()
 		if (fErrorCount >= MAX_ERRORS)
 		{
 			//requeue failed activity
-			QueueActivity(&activity, DOWNLOAD);
+			QueueActivity(activity, DOWNLOAD);
 		}	
 		delete cs;
 	}
@@ -535,40 +605,40 @@ status_t Manager::UploadWorkerThread_static(void *manager)
 
 int Manager::UploadWorkerThread_func()
 {
-	bool processed = false;
 	if (UploadTotal()>0)
 	{
+		int localErrors = 0;
 		CloudSupport *cs;
 		cs = _GetCloudController();
-		Activity * activity = &DequeueUpload();
-		while (activity != NULL && fErrorCount < MAX_ERRORS)
+		Activity * activity = DequeueUpload();
+		while (activity != NULL && fErrorCount < MAX_ERRORS && localErrors < MAX_ERRORS)
 		{
-			BEntry entry = BEntry(activity->sourcePath->String());
-			processed = true;
+			BEntry entry = BEntry(activity->sourcePath.String());
 			BString * commitentry = new BString("");
-			if (!entry.Exists() || cs->Upload(activity->sourcePath->String(), activity->destPath->String(), activity->modifiedTime, activity->fileSize, *commitentry))
+			if (!entry.Exists() || cs->Upload(activity->sourcePath.String(), activity->destPath.String(), activity->modifiedTime, activity->fileSize, *commitentry))
 			{
 				LogUploadCommit(commitentry);
-				delete activity;
-				activity = &DequeueUpload();
+				Activity * nextActivity = activity->next;
+				delete activity;	
+				if (nextActivity != NULL) QueueActivity(nextActivity, nextActivity->action);
+				activity = DequeueUpload();
 				fErrorCount = 0;
+				localErrors = 0;
 			} else {
+				localErrors++;
 				NotifyError(cs->GetLastError(), cs->GetLastErrorMessage());
 				sleep(5); //sleep a bit before retry
 			}
 		}
-		if (fErrorCount >= MAX_ERRORS)
+		if (fErrorCount >= MAX_ERRORS || localErrors >= MAX_ERRORS)
 		{
 			//check if file exists - if so requeue failed activity
-			BEntry entry = BEntry(activity->sourcePath->String());
+			BEntry entry = BEntry(activity->sourcePath.String());
 			if (entry.Exists()) {
-				fQueuedUploadsLocker->Lock();
-				fQueuedUploads->AddItem(activity);	
-				fQueuedUploadsLocker->Unlock();
+				QueueActivity(activity, activity->action, false);	
 			}
 		}		
 		delete cs;
-		if (processed) TryWakeUploadManager();
 	}	
 	return B_OK;		
 }
@@ -590,7 +660,6 @@ int Manager::UploadThread_func()
 	{
 		gGlobals.SetActivity(M_ACTIVITY_UP);
 
-		thread_id sender;
 		CloudSupport *cs;
 		//pull up to 1000 items (Dropbox limit) to a separate list
 		if (itemcount > 1000) itemcount = 1000;
@@ -599,7 +668,7 @@ int Manager::UploadThread_func()
 		fQueuedUploads = new BObjectList<Activity>(itemcount);
 		for (int i=0; i< itemcount; i++)
 		{
-			fQueuedUploads->AddItem(&Dequeue(UPLOAD));
+			fQueuedUploads->AddItem(Dequeue(UPLOAD));
 		}
 		fQueuedUploadsLocker->Unlock();
 		
@@ -612,12 +681,12 @@ int Manager::UploadThread_func()
 		}
 		
 		//TODO: possible hang/race here, needs more work
-		do
-		{
+		//do
+		//{
 			// wait until we run out of stuff to do
-			receive_data(&sender, NULL, 0);
-		}
-		while (UploadTotal()>0 && fErrorCount < MAX_ERRORS);
+		//	receive_data(&sender, NULL, 0);
+		//}
+		//while (UploadTotal()>0 && fErrorCount < MAX_ERRORS);
 		
 		//wait for all threads to terminate
 		for (int i=0; i< fMaxThreads; i++)
@@ -641,7 +710,7 @@ int Manager::UploadThread_func()
 			cs->UploadBatchCheck(fUploadAsyncJobId, jobstatus);
 			if (strcmp(jobstatus.String(), "in_progress") != 0)
 			{
-				fUploadAsyncJobId = BString("");			
+				fUploadAsyncJobId = BString("");	
 			}
 		}
 		
@@ -653,17 +722,15 @@ int Manager::UploadThread_func()
 		fUploadCommits.MakeEmpty();
 		fUploadCommitLocker->Unlock();
 		fQueuedUploadsLocker->Lock();
-		if (fErrorCount >= MAX_ERRORS) 
+
+		//re-add remaining queuedUploads to ActivityQueue
+		for (int i=0; i< fQueuedUploads->CountItems(); i++)
 		{
-			//re-add remaining queuedUploads to ActivityQueue
-			for (int i=0; i< fQueuedUploads->CountItems(); i++)
-			{
-				fActivityLocker->Lock();
-				fQueuedActivities[UPLOAD].AddItem(fQueuedUploads->ItemAt(i));
-				fActivityLocker->Unlock();
-			}
+			QueueActivity(fQueuedUploads->ItemAt(i), UPLOAD, false);
 		}
+
 		delete fQueuedUploads;
+		delete[] threads;
 		fQueuedUploadsLocker->Unlock();
 		gGlobals.SetActivity(M_ACTIVITY_NONE);
 
@@ -673,48 +740,61 @@ int Manager::UploadThread_func()
 	return B_OK;
 }
 
-void Manager::QueueActivity(Activity ** activity, SupportedActivities type)
+void Manager::QueueActivity(Activity *activity, SupportedActivities type, bool triggerWorker)
 {
+	Activity * curactivity;
+	bool found = false;
 	fActivityLocker->Lock();
-	fQueuedActivities[type].AddItem(*activity);
+	for (int i=0; i< fQueuedActivities->CountItems(); i++)
+	{
+		curactivity = fQueuedActivities->ItemAt(i);
+		if (strcmp(curactivity->sourcePath, activity->sourcePath) == 0)
+		{
+			curactivity->AddNext(activity);	
+			found = true;
+			break;
+		}
+	}
+	if (!found)
+		fQueuedActivities->AddItem(activity);
 	fActivityLocker->Unlock();
 	TrySpawnWorker();
 }
 
 void Manager::QueueUpload(const char * file, const char * destfullpath, time_t modified, off_t size)
 {
-	Activity * activity = new Activity(fRunningCloud, UPLOAD, file, destfullpath, modified, size);
-	QueueActivity(&activity, UPLOAD);
+	Activity * activity = new Activity(UPLOAD, file, destfullpath, modified, size);
+	QueueActivity(activity, UPLOAD);
 }
 
 void Manager::QueueDownload(const char * file, const char * destfullpath, time_t modified)
 {
-	Activity * activity = new Activity(fRunningCloud, DOWNLOAD, file, destfullpath, modified, 0);
-	QueueActivity(&activity, DOWNLOAD);
+	Activity * activity = new Activity(DOWNLOAD, file, destfullpath, modified, 0);
+	QueueActivity(activity, DOWNLOAD);
 }
 
 void Manager::QueueCreate(const char * destfullpath)
 {
-	Activity * activity = new Activity(fRunningCloud, CREATE, destfullpath, "", 0, 0);
-	QueueActivity(&activity, CREATE);
+	Activity * activity = new Activity(CREATE, destfullpath, "", 0, 0);
+	QueueActivity(activity, CREATE);
 }
 
 void Manager::QueueDownloadFolder(const char * path)
 {
-	Activity * activity = new Activity(fRunningCloud, DOWNLOAD_FOLDER, path, "", 0, 0);
-	QueueActivity(&activity, DOWNLOAD_FOLDER);
+	Activity * activity = new Activity(DOWNLOAD_FOLDER, path, "", 0, 0);
+	QueueActivity(activity, DOWNLOAD_FOLDER);
 }
 
 void Manager::QueueDelete(const char * path)
 {
-	Activity * activity = new Activity(fRunningCloud, DELETE, path, "", 0, 0);
-	QueueActivity(&activity, DELETE);
+	Activity * activity = new Activity(DELETE, path, "", 0, 0);
+	QueueActivity(activity, DELETE);
 }
 
 void Manager::QueueMove(const char * from, const char * to)
 {
-	Activity * activity = new Activity(fRunningCloud, MOVE, from, to, 0, 0);
-	QueueActivity(&activity, MOVE);
+	Activity * activity = new Activity(MOVE, from, to, 0, 0);
+	QueueActivity(activity, MOVE);
 }
 
 status_t Manager::CheckerThread_static(void *manager)

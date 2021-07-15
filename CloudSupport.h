@@ -12,9 +12,12 @@ class CloudSupport {
 		virtual const char * GetLastErrorMessage(void) = 0;
 		
 		virtual bool GetToken() = 0;
-		virtual bool ListFiles(const char * path, bool recurse, BList & items) = 0;
-		virtual int LongPollForChanges(BList & items) = 0;
-		virtual bool GetChanges(BList & items, bool fullupdate) = 0;
+		virtual bool LongPollForChanges(int & backoff) = 0;
+		
+		// can return lists of items with potentially more items
+		virtual bool ListFiles(const char * path, bool recurse, BList & items, bool & hasmore) = 0;
+		virtual bool GetFolder(BList & items, bool & hasmore) = 0;
+
 		
 	//file get/put/delete
 		virtual bool Upload(const char * file, const char * destfullpath, time_t modified, off_t size, BString & commitentry) = 0;
