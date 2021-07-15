@@ -660,7 +660,7 @@ bool DropboxSupport::UploadBatch(BList & commitdata, BString & asyncjobid)
 	{
 		BString * commit = (BString *)commitdata.ItemAtFast(i);
 		postData.Append(commit->String());
-		if (i < (commitdata.CountItems()-1))
+		if (i < (commitdata.CountItems()-1) && commit->Length() > 0)
 		{
 			postData.Append(",");
 		}
